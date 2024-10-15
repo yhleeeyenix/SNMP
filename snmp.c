@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "1014.h"
+#include "snmp.h"
 
 unsigned long get_system_uptime() {
     FILE *fp;
