@@ -4,56 +4,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-
-#define SNMP_PORT 161
-#define BUFFER_SIZE 1024
-
-// SNMP packet structure definition
-typedef struct {
-    int version;
-    char community[BUFFER_SIZE];
-    unsigned char pdu_type;
-    unsigned int request_id;
-    unsigned char oid[BUFFER_SIZE];
-    int oid_len;
-    unsigned char error_status;
-    unsigned char error_index;
-    int non_repeaters;
-    int max_repetitions;
-} SNMPPacket;
-
-
-// 캐시 구조체 정의
-typedef struct {
-    unsigned char oid[BUFFER_SIZE];
-    int oid_len;
-    int response_value;
-} SNMPCacheEntry;
-
-// Define a structure to store OIDs and their corresponding values
-typedef struct {
-    char oid[BUFFER_SIZE];
-    char value[64];
-} MIBEntry;
-
-MIBEntry mibEntries[] = {
-    {"1.3.6.1.2.1", "MIB-II Base"},
-    {"1.3.6.1.2.1.1.1.0", "en675"},
-    // {"1.3.6.1.2.1.1.2.0", "iso.3.6.1.4.1.****"},
-    {"1.3.6.1.2.1.1.3.0", "uptime"},
-    {"1.3.6.1.2.1.1.4.0", "admin@eyenix.com"},
-    {"1.3.6.1.4.1", "Private MIB"},
-    // {"1.3.6.1.4.1.127.1.0", "eyenix EN673"},
-    // modelName
-    {"1.3.6.1.4.1.127.2.1", "eyenix EN675"},
-    // systemInfo
-        // SystemSubInfo
-            // fwVersionInfo: 펌웨어 버전 정보
-    {"1.3.6.1.4.1.127.2.2.1.1", "v1.xx_xxxxxxxxxxxx"},
-            // dateTimeInfo: 시스템의 날짜 및 시간 정보
-    {"1.3.6.1.4.1.127.2.2.1.2", "system date"},
-    // {"1.3.6.1.5.1", "test"},
-};
+#include "1014.h"
 
 unsigned long get_system_uptime() {
     FILE *fp;
@@ -76,29 +27,24 @@ unsigned long get_system_uptime() {
 }
 
 char* get_date(){
-    // 명령어를 실행하고 그 결과를 읽기 위한 파일 포인터
     FILE *fp;
     char buffer[128];
-    static char result[128]; // 반환할 문자열을 저장하는 배열
-    result[0] = '\0';  // 결과 문자열을 초기화
+    static char result[128];
+    result[0] = '\0';
 
-    // popen을 사용하여 명령어 실행 후 출력값 읽기
     fp = popen("date", "r");
     if (fp == NULL) {
         printf("Failed to run date command.\n");
         return NULL;
     }
 
-    // 명령어 실행 결과를 한 줄씩 읽어옴
     while (fgets(buffer, sizeof(buffer), fp) != NULL) {
         buffer[strcspn(buffer, "\n")] = '\0';
         strcat(result, buffer);
     }
 
-    // popen 종료 (파일 포인터 닫기)
     pclose(fp);
 
-    // 명령어 결과를 반환
     return result;
 }
 
@@ -117,13 +63,12 @@ char * get_version() {
     while (fgets(buffer, sizeof(buffer), fp) != NULL) {
         buffer[strcspn(buffer, "\n")] = '\0';
 
-        // "(" 문자를 찾아서 이후 부분을 자름
         char *pos = strstr(buffer, "(");
         if (pos != NULL) {
-            *pos = '\0';  // "(" 이후의 문자열을 자름
+            *pos = '\0';
         }
 
-        strcat(result, buffer);  // result에 문자열 추가
+        strcat(result, buffer);
     }
 
     pclose(fp);
@@ -156,10 +101,10 @@ void update_dynamic_values() {
             mibEntries[i].value[sizeof(mibEntries[i].value) - 1] = '\0'; // Null termination
         } else if (strcmp(mibEntries[i].oid, "1.3.6.1.4.1.127.2.2.1.1") == 0) {
             strncpy(mibEntries[i].value, version_output, sizeof(mibEntries[i].value) -1);
-            mibEntries[i].value[sizeof(mibEntries[i].value) - 1] = '\0'; // Null termination
+            mibEntries[i].value[sizeof(mibEntries[i].value) - 1] = '\0';
         } else if (strcmp(mibEntries[i].oid, "1.3.6.1.4.1.127.2.2.1.2") == 0) {
             strncpy(mibEntries[i].value, date_output, sizeof(mibEntries[i].value) - 1);
-            mibEntries[i].value[sizeof(mibEntries[i].value) - 1] = '\0'; // Null termination
+            mibEntries[i].value[sizeof(mibEntries[i].value) - 1] = '\0';
         }
     }
 }
@@ -179,39 +124,16 @@ void oid_to_string(unsigned char *oid, int oid_len, char *oid_str) {
 // OID를 기반으로 다음 MIB 데이터 항목 찾기
 int find_next_mib_entry(unsigned char *oid, int oid_len, MIBEntry **nextEntry) {
     char oid_str[BUFFER_SIZE];
-    oid_to_string(oid, oid_len, oid_str);    
+    oid_to_string(oid, oid_len, oid_str);
 
-    // MIB 엔트리가 정렬되어 있다고 가정
     for (int i = 0; i < mibEntriesCount; i++) {
         if (strcmp(mibEntries[i].oid, oid_str) > 0) {
             *nextEntry = &mibEntries[i];
-            return 1;  // 다음 엔트리를 찾음
+            return 1;
         }
     }
     *nextEntry = NULL;
-    return 0;  // 다음 엔트리를 찾지 못함
-}
-
-// SNMP 버전 및 PDU 구분 함수
-const char* snmp_version(int version) {
-    switch(version) {
-        case 0: return "SNMPv1";
-        case 1: return "SNMPv2c";
-        case 2: return "SNMPv3";
-        default: return "Unknown";
-    }
-}
-
-const char* pdu_type_str(unsigned char pdu_type) {
-    switch(pdu_type) {
-        case 0xA0: return "GET-REQUEST";
-        case 0xA1: return "GET-NEXT";
-        case 0xA2: return "GET-RESPONSE";
-        case 0xA3: return "SET-REQUEST";
-        case 0xA4: return "TRAP";
-        case 0xA5: return "GET-BULK";
-        default: return "Unknown PDU";
-    }
+    return 0;
 }
 
 // ASN.1 BER 형식의 길이 필드 디코딩
@@ -243,10 +165,9 @@ int write_length(unsigned char *buffer, int len) {
         buffer[0] = len;
         return 1;
     } else {
-        // 길이가 128 이상인 경우
         int num_len_bytes = 0;
         int temp_len = len;
-        unsigned char len_bytes[4];  // 최대 4바이트
+        unsigned char len_bytes[4];
         while (temp_len > 0) {
             len_bytes[num_len_bytes++] = temp_len & 0xFF;
             temp_len >>= 8;
@@ -303,16 +224,14 @@ void parse_tlv(unsigned char *buffer, int *index, int length, SNMPPacket *snmp_p
             snmp_packet->oid_len = len;
             *index += len;
         } else {
-            // 알 수 없는 타입인 경우 건너뜀
             *index += len;
         }
     }
 }
 
-
 int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
     int oid_buf_len = 0;
-    unsigned int oid_parts[128];  // 최대 128개의 서브 식별자
+    unsigned int oid_parts[128];
     int oid_parts_count = 0;
 
     // OID 문자열을 정수 배열로 파싱
@@ -355,8 +274,7 @@ int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
     return oid_buf_len;
 }
 
-
-// 파싱된 패킷 출력
+// Function to output parsed packets
 void print_snmp_packet(SNMPPacket *snmp_packet) {
     printf("SNMP Version: %s\n", snmp_version(snmp_packet->version));
     printf("Community: %s\n", snmp_packet->community);
@@ -390,10 +308,30 @@ int encode_length(unsigned char *buffer, int length) {
         }
         buffer[0] = 0x80 | num_bytes;
         for (int i = 0; i < num_bytes; i++) {
-            buffer[i + 1] = len_bytes[num_bytes - 1 - i]; // 빅 엔디언
+            buffer[i + 1] = len_bytes[num_bytes - 1 - i];
         }
         return num_bytes + 1;
     }
+}
+
+int oid_compare(const unsigned char *oid1, int oid1_len, const unsigned char *oid2, int oid2_len) {
+    int min_len = oid1_len < oid2_len ? oid1_len : oid2_len;
+
+    for (int i = 0; i < min_len; i++) {
+        if (oid1[i] < oid2[i]) {
+            return -1;
+        } else if (oid1[i] > oid2[i]) {
+            return 1;
+        }
+    }
+
+    if (oid1_len < oid2_len) {
+        return -1;
+    } else if (oid1_len > oid2_len) {
+        return 1;
+    }
+
+    return 0;
 }
 
 void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, int *response_len, MIBEntry *mibEntries,
@@ -401,8 +339,114 @@ void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, i
     unsigned char varbind_list[BUFFER_SIZE];
     int varbind_list_len = 0;
 
-    // Variable Bindings 생성
-    for (int i = 0; i < max_repetitions; i++) {
+    char requested_oid_str[BUFFER_SIZE];
+    oid_to_string(request_packet->oid, request_packet->oid_len, requested_oid_str);
+    printf("requested_oid_str: %s\n", requested_oid_str);
+
+    int start_index = -1;
+
+    if (strcmp("0.0", requested_oid_str) == 0) {
+        start_index = -1; // 유효하지 않은 요청
+    } else {
+        for (int i = 0; i < mibEntriesCount; i++) {
+            unsigned char mib_oid[BUFFER_SIZE];
+            int mib_oid_len = string_to_oid(mibEntries[i].oid, mib_oid);
+            int cmp_result = oid_compare(request_packet->oid, request_packet->oid_len, mib_oid, mib_oid_len);
+            if (cmp_result < 0) {
+                start_index = i; // 요청된 OID 이후의 첫 번째 항목 설정
+                break;
+            } else if (cmp_result == 0) {
+                // 현재 요청된 OID와 동일한 경우, 다음 항목부터 시작
+                start_index = i + 1;
+                break;
+            }
+        }
+    }
+
+    if (start_index == -1) {
+        *response_len = 0;
+
+        // Variable Bindings 작성 (빈 SEQUENCE)
+        unsigned char varbind_list_field[BUFFER_SIZE];
+        int varbind_list_field_len = 0;
+        varbind_list_field[varbind_list_field_len++] = 0x30; // SEQUENCE
+        varbind_list_field_len += encode_length(&varbind_list_field[varbind_list_field_len], 0); // 길이 0으로 설정
+
+        // PDU 작성 (GET-RESPONSE)
+        unsigned char pdu[BUFFER_SIZE];
+        int pdu_len = 0;
+        pdu[pdu_len++] = 0xA2; // GET-RESPONSE PDU
+
+        // PDU 내용 작성
+        unsigned char pdu_content[BUFFER_SIZE];
+        int pdu_content_len = 0;
+
+        // Request ID
+        pdu_content[pdu_content_len++] = 0x02; // INTEGER
+        pdu_content[pdu_content_len++] = 0x04; // 길이 4바이트
+        pdu_content[pdu_content_len++] = (request_packet->request_id >> 24) & 0xFF;
+        pdu_content[pdu_content_len++] = (request_packet->request_id >> 16) & 0xFF;
+        pdu_content[pdu_content_len++] = (request_packet->request_id >> 8) & 0xFF;
+        pdu_content[pdu_content_len++] = request_packet->request_id & 0xFF;
+
+        // Error Status
+        pdu_content[pdu_content_len++] = 0x02; // INTEGER
+        pdu_content[pdu_content_len++] = 0x01; // 길이 1바이트
+        pdu_content[pdu_content_len++] = 0x00; // noError
+
+        // Error Index
+        pdu_content[pdu_content_len++] = 0x02; // INTEGER
+        pdu_content[pdu_content_len++] = 0x01; // 길이 1바이트
+        pdu_content[pdu_content_len++] = 0x00; // noError
+
+        // Variable Bindings 추가 (빈 바인딩 리스트)
+        memcpy(&pdu_content[pdu_content_len], varbind_list_field, varbind_list_field_len);
+        pdu_content_len += varbind_list_field_len;
+
+        // PDU 길이 설정
+        pdu_len += encode_length(&pdu[pdu_len], pdu_content_len);
+        memcpy(&pdu[pdu_len], pdu_content, pdu_content_len);
+        pdu_len += pdu_content_len;
+
+        // 전체 메시지 작성 (SEQUENCE)
+        int cursor = 0;
+        response[cursor++] = 0x30; // SEQUENCE
+
+        // 메시지 내용 작성
+        unsigned char message_content[BUFFER_SIZE];
+        int message_content_len = 0;
+
+        // SNMP 버전
+        message_content[message_content_len++] = 0x02; // INTEGER
+        message_content[message_content_len++] = 0x01; // 길이 1바이트
+        message_content[message_content_len++] = request_packet->version;
+
+        // 커뮤니티 문자열
+        message_content[message_content_len++] = 0x04; // OCTET STRING
+        int community_len = strlen(request_packet->community);
+        message_content_len += encode_length(&message_content[message_content_len], community_len);
+        memcpy(&message_content[message_content_len], request_packet->community, community_len);
+        message_content_len += community_len;
+
+        // PDU 추가
+        memcpy(&message_content[message_content_len], pdu, pdu_len);
+        message_content_len += pdu_len;
+
+        // 전체 메시지 길이 설정
+        cursor += encode_length(&response[cursor], message_content_len);
+        memcpy(&response[cursor], message_content, message_content_len);
+        cursor += message_content_len;
+
+        // 응답 길이 설정
+        *response_len = cursor;
+
+        return;
+    }
+
+    int repetitions = 0;
+
+    // 요청된 OID 이후의 값을 반복하여 생성 (max_repetitions 만큼)
+    for (int i = start_index; repetitions < max_repetitions && i < mibEntriesCount; i++, repetitions++) {
         unsigned char varbind[BUFFER_SIZE];
         int varbind_len = 0;
 
@@ -444,6 +488,42 @@ void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, i
         memcpy(&varbind_list[varbind_list_len], varbind, varbind_len);
         varbind_list_len += varbind_len;
     }
+
+    if (repetitions < max_repetitions) {
+        unsigned char varbind[BUFFER_SIZE];
+        int varbind_len = 0;
+
+        // OID 인코딩 (마지막 항목의 OID를 그대로 사용)
+        unsigned char oid_buffer[BUFFER_SIZE];
+        int oid_len = string_to_oid(mibEntries[mibEntriesCount - 1].oid, oid_buffer);
+
+        // Value 필드 작성 (endOfMibView)
+        unsigned char value_field[BUFFER_SIZE];
+        int value_field_len = 0;
+        value_field[value_field_len++] = 0x82; // endOfMibView
+        value_field_len += encode_length(&value_field[value_field_len], 0);
+
+        // OID 필드 작성 (OBJECT IDENTIFIER)
+        unsigned char oid_field[BUFFER_SIZE];
+        int oid_field_len = 0;
+        oid_field[oid_field_len++] = 0x06; // OBJECT IDENTIFIER
+        oid_field_len += encode_length(&oid_field[oid_field_len], oid_len);
+        memcpy(&oid_field[oid_field_len], oid_buffer, oid_len);
+        oid_field_len += oid_len;
+
+        // VarBind 작성 (SEQUENCE)
+        varbind[varbind_len++] = 0x30; // SEQUENCE
+        int varbind_content_len = oid_field_len + value_field_len;
+        varbind_len += encode_length(&varbind[varbind_len], varbind_content_len);
+        memcpy(&varbind[varbind_len], oid_field, oid_field_len);
+        varbind_len += oid_field_len;
+        memcpy(&varbind[varbind_len], value_field, value_field_len);
+        varbind_len += value_field_len;
+
+        // VarBind를 VarBindList에 추가
+        memcpy(&varbind_list[varbind_list_len], varbind, varbind_len);
+        varbind_list_len += varbind_len;
+    }    
 
     // Variable Bindings 작성 (SEQUENCE)
     unsigned char varbind_list_field[BUFFER_SIZE];
@@ -558,7 +638,18 @@ void create_snmp_response(SNMPPacket *request_packet, unsigned char *response, i
     // 3.2. Error Status
     buffer[index++] = 0x02; // INTEGER
     index += encode_length(&buffer[index], 1);
-    buffer[index++] = (error_status > 0 && snmp_version == 1) ? error_status : 0;  // SNMPv1일 때만 에러 코드 사용, SNMPv2c는 예외로 처리
+
+    // SNMPv1과 SNMPv2c의 에러 상태 처리
+    if (snmp_version == 1) {
+        // SNMPv1은 에러 코드 사용
+        buffer[index++] = error_status;
+    } else {
+        if (error_status >= SNMP_EXCEPTION_NO_SUCH_OBJECT && error_status <= SNMP_EXCEPTION_END_OF_MIB_VIEW) {
+            buffer[index++] = 0;
+        } else {
+            buffer[index++] = (error_status == SNMP_ERROR_NO_ERROR) ? 0 : error_status;
+        }
+    }
 
     // 3.3. Error Index
     buffer[index++] = 0x02; // INTEGER
@@ -580,7 +671,7 @@ void create_snmp_response(SNMPPacket *request_packet, unsigned char *response, i
     index += response_oid_len;
 
     // 3.4.1.2. Value
-    if (error_status == 0) {
+    if (error_status == SNMP_ERROR_NO_ERROR) {
         buffer[index++] = 0x04; // OCTET STRING
         int value_length = strlen(response_value);
         index += encode_length(&buffer[index], value_length);
@@ -594,14 +685,14 @@ void create_snmp_response(SNMPPacket *request_packet, unsigned char *response, i
         } else if (snmp_version == 2) {
             // SNMPv2c에서는 Exception을 값으로 반환
             switch (error_status) {
-                case 2: // noSuchObject
-                    buffer[index++] = 0x80; // noSuchObject (0x80은 noSuchObject를 나타냄)
+                case SNMP_EXCEPTION_NO_SUCH_OBJECT:
+                    buffer[index++] = 0x80; // noSuchObject
                     break;
-                case 3: // noSuchInstance
-                    buffer[index++] = 0x81; // noSuchInstance (0x81은 noSuchInstance를 나타냄)
+                case SNMP_EXCEPTION_NO_SUCH_INSTANCE:
+                    buffer[index++] = 0x81; // noSuchInstance
                     break;
-                case 4: // endOfMibView
-                    buffer[index++] = 0x82; // endOfMibView (0x82는 endOfMibView를 나타냄)
+                case SNMP_EXCEPTION_END_OF_MIB_VIEW:
+                    buffer[index++] = 0x82; // endOfMibView
                     break;
                 default:
                     buffer[index++] = 0x80; // 기본적으로 noSuchObject로 설정
@@ -648,7 +739,6 @@ void create_snmp_response(SNMPPacket *request_packet, unsigned char *response, i
     *response_len = final_index;
 }
 
-// SNMP 요청 처리
 void handle_snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int sockfd, int snmp_version, const char *allowed_community) {
     update_dynamic_values();
 
@@ -657,86 +747,154 @@ void handle_snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliad
     int response_len = 0;
 
     memset(&snmp_packet, 0, sizeof(SNMPPacket));
-    snmp_packet.version = -1;  // 버전을 -1로 초기화
+    snmp_packet.version = -1;
 
     int index = 0;
     parse_tlv(buffer, &index, n, &snmp_packet);
-    print_snmp_packet(&snmp_packet);
 
-    // 커뮤니티 이름 검사
+    // Check community name
     if (strcmp(snmp_packet.community, allowed_community) != 0) {
         printf("Unauthorized community: %s\n", snmp_packet.community);
-        // 커뮤니티 이름이 허용되지 않으면 응답을 전송하지 않고 함수 종료
         return;
-    }        
+    }
 
     // 요청된 OID를 문자열로 변환
     char requested_oid_str[BUFFER_SIZE];
     oid_to_string(snmp_packet.oid, snmp_packet.oid_len, requested_oid_str);
 
-    MIBEntry* entry = NULL;
+    MIBEntry *entry = NULL;
     int found = 0;
+    int error_status = SNMP_ERROR_NO_ERROR;  // 기본적으로 오류 없음으로 설정
 
-    if (snmp_packet.pdu_type == 0xA0) {  // GET-REQUEST
-        // 정확한 OID 찾기
-        for (int i = 0; i < mibEntriesCount; i++) {
-            if (strcmp(mibEntries[i].oid, requested_oid_str) == 0) {
-                entry = &mibEntries[i];
-                found = 1;
-                break;
+    switch (snmp_version) {
+        case 1: // SNMPv1
+            if (snmp_packet.pdu_type == 0xA0) { // GET-REQUEST
+                for (int i = 0; i < mibEntriesCount; i++) {
+                    if (strcmp(mibEntries[i].oid, requested_oid_str) == 0) {
+                        entry = &mibEntries[i];
+                        found = 1;
+                        break;
+                    }
+                }
+                if (found) {
+                    unsigned char response_oid[BUFFER_SIZE];
+                    int response_oid_len = string_to_oid(entry->oid, response_oid);
+
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                         response_oid, response_oid_len, entry->value, error_status, 0, snmp_version);
+
+                    if (response_len > MAX_SNMP_PACKET_SIZE) {
+                        error_status = SNMP_ERROR_TOO_BIG;
+                        response_len = 0;
+                        create_snmp_response(&snmp_packet, response, &response_len,
+                                             snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 0, snmp_version);
+                    }
+                } else {
+                    error_status = SNMP_ERROR_NO_SUCH_NAME;
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                         snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 1, snmp_version);
+                }
+            } else if (snmp_packet.pdu_type == 0xA1) { // GET-NEXT
+                found = find_next_mib_entry(snmp_packet.oid, snmp_packet.oid_len, &entry);
+
+                if (found) {
+                    unsigned char response_oid[BUFFER_SIZE];
+                    int response_oid_len = string_to_oid(entry->oid, response_oid);
+
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                         response_oid, response_oid_len, entry->value, error_status, 0, snmp_version);
+
+                    if (response_len > MAX_SNMP_PACKET_SIZE) {
+                        error_status = SNMP_ERROR_TOO_BIG;
+                        response_len = 0;
+                        create_snmp_response(&snmp_packet, response, &response_len,
+                                             snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 0, snmp_version);
+                    }
+                } else {
+                    error_status = SNMP_ERROR_NO_SUCH_NAME;
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                         snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 1, snmp_version);
+                }
+            } else {
+                printf("Unsupported PDU Type for SNMPv1: %d\n", snmp_packet.pdu_type);
+                error_status = SNMP_ERROR_GENERAL_ERROR;
+                create_snmp_response(&snmp_packet, response, &response_len,
+                                     snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 1, snmp_version);
             }
-        }
+            break;
 
-        if (found) {
-            // OID 인코딩
-            unsigned char response_oid[BUFFER_SIZE];
-            int response_oid_len = string_to_oid(entry->oid, response_oid);
+        case 2: // SNMPv2c
+            if (snmp_packet.pdu_type == 0xA0) { // GET-REQUEST
+                for (int i = 0; i < mibEntriesCount; i++) {
+                    if (strcmp(mibEntries[i].oid, requested_oid_str) == 0) {
+                        entry = &mibEntries[i];
+                        found = 1;
+                        break;
+                    }
+                }
+                if (found) {
+                    unsigned char response_oid[BUFFER_SIZE];
+                    int response_oid_len = string_to_oid(entry->oid, response_oid);
 
-            create_snmp_response(&snmp_packet, response, &response_len,
-                                 response_oid, response_oid_len, entry->value, 0, 0, snmp_version);
-        } else {
-            printf("GET-REQUEST -> No Data Available for OID: %s\n", requested_oid_str);
-            // 에러 응답 생성
-            create_snmp_response(&snmp_packet, response, &response_len,
-                                 snmp_packet.oid, snmp_packet.oid_len, NULL, 2, 1, snmp_version);
-        }
-    } else if (snmp_packet.pdu_type == 0xA1) {  // GET-NEXT
-        // 다음 OID 찾기
-        found = find_next_mib_entry(snmp_packet.oid, snmp_packet.oid_len, &entry);
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                        response_oid, response_oid_len, entry->value, SNMP_ERROR_NO_ERROR, 0, snmp_version);
 
-        if (found) {
-            // OID 인코딩
-            unsigned char response_oid[BUFFER_SIZE];
-            int response_oid_len = string_to_oid(entry->oid, response_oid);
+                    if (response_len > MAX_SNMP_PACKET_SIZE) {
+                        error_status = SNMP_ERROR_TOO_BIG;
+                        response_len = 0;
+                        create_snmp_response(&snmp_packet, response, &response_len,
+                                            snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 0, snmp_version);
+                    }
+                } else {
+                    error_status = SNMP_EXCEPTION_NO_SUCH_OBJECT;
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                        snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 1, snmp_version);
+                }
+            } else if (snmp_packet.pdu_type == 0xA1) { // GET-NEXT
+                found = find_next_mib_entry(snmp_packet.oid, snmp_packet.oid_len, &entry);
+                if (found) {
+                    unsigned char response_oid[BUFFER_SIZE];
+                    int response_oid_len = string_to_oid(entry->oid, response_oid);
 
-            create_snmp_response(&snmp_packet, response, &response_len,
-                                 response_oid, response_oid_len, entry->value, 0, 0, snmp_version);
-        } else {
-            printf("GET-NEXT -> No Next OID Available after: %s\n", requested_oid_str);
-            // 에러 응답 생성 (변수 바인딩 포함)
-            create_snmp_response(&snmp_packet, response, &response_len,
-                                 snmp_packet.oid, snmp_packet.oid_len, NULL, 2, 1, snmp_version);
-        }
-    } else if (snmp_version == 2 && snmp_packet.pdu_type == 0xA5) {  // SNMPv2c의 GET-BULK
-        printf("Bulk request received\n");
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                        response_oid, response_oid_len, entry->value, SNMP_ERROR_NO_ERROR, 0, snmp_version);
 
-        // int non_repeaters = snmp_packet.non_repeaters;
-        int max_repetitions = snmp_packet.max_repetitions;
+                    if (response_len > MAX_SNMP_PACKET_SIZE) {
+                        error_status = SNMP_ERROR_TOO_BIG;
+                        response_len = 0;
+                        create_snmp_response(&snmp_packet, response, &response_len,
+                                            snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 0, snmp_version);
+                    }
+                } else {
+                    error_status = SNMP_EXCEPTION_END_OF_MIB_VIEW;
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                        snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 0, snmp_version);
+                }
+            } else if (snmp_packet.pdu_type == 0xA5) { // GET-BULK
+                printf("Bulk request received\n");
 
-        unsigned char varbind_buffer[BUFFER_SIZE];
-        memset(varbind_buffer, 0, BUFFER_SIZE);
+                int non_repeaters = snmp_packet.non_repeaters;
+                int max_repetitions = snmp_packet.max_repetitions;
 
-        int bulk_count = max_repetitions;
-        if (bulk_count >= mibEntriesCount){
-            bulk_count = mibEntriesCount;
-        }
+                int bulk_count = max_repetitions;
+                if (bulk_count >= mibEntriesCount) {
+                    bulk_count = mibEntriesCount;
+                }
 
-        create_bulk_response(&snmp_packet, response, &response_len, mibEntries, bulk_count);
-    } else {
-        printf("Unsupported PDU Type: %d\n", snmp_packet.pdu_type);
+                create_bulk_response(&snmp_packet, response, &response_len, mibEntries, bulk_count);
+            } else {
+                printf("Unsupported PDU Type for SNMPv2c: %d\n", snmp_packet.pdu_type);
+                error_status = SNMP_EXCEPTION_END_OF_MIB_VIEW;
+                create_snmp_response(&snmp_packet, response, &response_len,
+                                    snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 1, snmp_version);
+            }
+            break;
+
+        default:
+            printf("Unsupported SNMP Version: %d\n", snmp_version);
+            return;
     }
 
-    // 응답 전송
     if (response_len > 0) {
         sendto(sockfd, response, response_len, 0, (struct sockaddr *)cliaddr, sizeof(*cliaddr));
     }
@@ -747,15 +905,13 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in servaddr, cliaddr;
     unsigned char buffer[BUFFER_SIZE];
     
-    // 기본 커뮤니티 이름 설정
+    // Set default community name(public)
     const char *allowed_community = "public";
 
-    // SNMP 버전 변수 추가
-    int snmp_version = 1;  // 기본값은 SNMPv1
+    // default snmp version
+    int snmp_version = 1;
 
-    // 명령줄 인자 처리
     if (argc > 1) {
-        // 첫 번째 인자: SNMP 버전 설정
         if (strcmp(argv[1], "1") == 0) {
             snmp_version = 1;
         } else if (strcmp(argv[1], "2c") == 0) {
@@ -765,36 +921,30 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        // 두 번째 인자: 커뮤니티 이름 설정
         if (argc > 2) {
             allowed_community = argv[2];
         }
     } else {
-        // 인자가 충분하지 않으면 사용법 안내 출력
         printf("Usage: %s [1|2c] [community]\n", argv[0]);
         printf("Using default SNMP version 1 and community 'public'\n");
     }
 
-    // UDP 소켓 생성
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("socket creation failed");
         exit(EXIT_FAILURE);
     }
 
-    // 서버 주소 설정 (포트 161에서 대기)
     memset(&servaddr, 0, sizeof(servaddr));
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = INADDR_ANY;
     servaddr.sin_port = htons(SNMP_PORT);
 
-    // 바인딩
     if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         perror("bind failed");
         exit(EXIT_FAILURE);
     }
 
-    // 패킷 수신 및 처리
     while (1) {
         socklen_t len = sizeof(cliaddr);
         int n = recvfrom(sockfd, (char *)buffer, BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
