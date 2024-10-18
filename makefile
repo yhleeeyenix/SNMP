@@ -3,7 +3,7 @@ CC      := $(CROSS_COMPILE)gcc $(CPU_CFLAGS) -g -Wall
 TARGET  := snmp
 
 # 소스 파일 목록
-SRCS    := snmp.c agent_handler.c
+SRCS    := snmp.c system_mib.c
 
 # 오브젝트 파일 목록
 OBJS    := $(SRCS:.c=.o)
