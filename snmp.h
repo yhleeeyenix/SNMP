@@ -1,9 +1,42 @@
 #ifndef SNMP_H
 #define SNMP_H
 
-#define SNMP_PORT 161
+#define MAX_NODES 100
 #define BUFFER_SIZE 1024
+#define SNMP_PORT 161
 #define MAX_SNMP_PACKET_SIZE 1024
+
+#define HANDLER_CAN_RONLY 0
+#define HANDLER_CAN_RWRITE 1
+
+typedef enum {
+    VALUE_TYPE_STRING,
+    VALUE_TYPE_INT,
+    VALUE_TYPE_OID,
+    VALUE_TYPE_TIME_TICKS
+} ValueType;
+
+typedef struct MIBNode {
+    char name[128];              // MIB 객체 이름
+    char oid[128];               // OID 문자열
+    char type[64];               // 타입 이름 (예: "INTEGER", "DisplayString" 등)
+    int isWritable;              // 쓰기 가능 여부
+    char status[16];             // 상태 (예: current, deprecated 등)
+
+    ValueType value_type;        // value의 실제 타입
+
+    union {
+        char str_value[64];      // 문자열 값
+        int int_value;           // 정수 값
+        unsigned long ticks_value; // TimeTicks와 같은 정수 값
+        char oid_value[64];      // OID 값을 저장할 문자열
+    } value;
+
+    struct MIBNode *parent;      // 부모 노드
+    struct MIBNode *child;       // 자식 노드
+    struct MIBNode *next;        // 형제 노드
+} MIBNode;
+
 
 // SNMP packet structure definition
 typedef struct {
@@ -44,35 +77,6 @@ typedef enum {
     SNMP_EXCEPTION_NO_SUCH_INSTANCE = 0x81,
     SNMP_EXCEPTION_END_OF_MIB_VIEW = 0x82
 } SNMPErrors;
-
-// Define a structure to store OIDs and their corresponding values
-typedef struct {
-    char oid[BUFFER_SIZE];
-    char value[64];
-} MIBEntry;
-
-MIBEntry mibEntries[] = {
-    {"1.3.6.1.2.1.1.1.0", "en675"},
-    {"1.3.6.1.2.1.1.2.0", "iso.3.6.1.4.1.127"},
-    {"1.3.6.1.2.1.1.3.0", "uptime"},
-    {"1.3.6.1.2.1.1.4.0", "1"},
-    {"1.3.6.1.2.1.1.5.0", "2"},
-    {"1.3.6.1.2.1.1.6.0", "3"},
-    {"1.3.6.1.2.1.1.7.0", "4"},
-    {"1.3.6.1.2.1.1.8.0", "5"},
-    {"1.3.6.1.2.1.1.9.0", "6"},
-    {"1.3.6.1.2.1.1.10.0", "7"},
-    {"1.3.6.1.2.1.1.11.0", "8"},
-    // modelName
-    {"1.3.6.1.4.1.127.2.1", "eyenix EN675"},
-    // systemInfo
-        // SystemSubInfo
-            // VersionInfo
-    {"1.3.6.1.4.1.127.2.2.1.1", "v1.xx_xxxxxxxxxxxx"},
-            // dateTimeInfo
-    {"1.3.6.1.4.1.127.2.2.1.2", "system date"},
-    // {"1.3.6.1.5.1", "test"},
-};
 
 const char* snmp_version(int version) {
     switch(version) {
