@@ -58,11 +58,11 @@ char* get_version() {
 
     fp = popen("cat /proc/version", "r");
     if (fp == NULL) {
-        perror("fopen");
+        perror("popen");
         return NULL;
     }
 
-    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+    if (fgets(buffer, sizeof(buffer), fp) != NULL) {
         buffer[strcspn(buffer, "\n")] = '\0';
 
         char *pos = strstr(buffer, "(");
@@ -70,10 +70,12 @@ char* get_version() {
             *pos = '\0';
         }
 
-        strcat(result, buffer);
+        strcpy(result, buffer);
     }
 
     pclose(fp);
+
+    // printf("version: %s\n", result);
 
     return result;
 }
@@ -220,4 +222,132 @@ char* get_current_netmask() {
     close(sock);
 
     return subnet_mask;
+}
+
+int read_cpu_times(unsigned long long *idle_time, unsigned long long *total_time) {
+    FILE *fp = fopen("/proc/stat", "r");
+    if (fp == NULL) {
+        perror("Failed to open /proc/stat");
+        return -1;
+    }
+
+    char line[256];
+    if (fgets(line, sizeof(line), fp) == NULL) {
+        perror("Failed to read /proc/stat");
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+
+    // Parse the first line that starts with "cpu "
+    char cpu_label[5];
+    unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
+    sscanf(line, "%s %llu %llu %llu %llu %llu %llu %llu %llu",
+           cpu_label, &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal);
+
+    *idle_time = idle + iowait;
+    *total_time = user + nice + system + idle + iowait + irq + softirq + steal;
+
+    return 0;
+}
+
+int get_cpuUsage() {
+    char buffer[128];
+    FILE *fp = popen("top -bn1 | grep \"CPU:\"", "r");
+    if (fp == NULL) {
+        perror("Failed to run top command");
+        return -1;
+    }
+
+    // Read the output of the command
+    if (fgets(buffer, sizeof(buffer), fp) == NULL) {
+        perror("Failed to read command output");
+        pclose(fp);
+        return -1;
+    }
+    pclose(fp);
+
+    double user, system, idle;
+    if (sscanf(buffer, "CPU: %lf%% usr %lf%% sys %*f%% nic %lf%% idle", &user, &system, &idle) != 3) {
+        fprintf(stderr, "Failed to parse CPU usage\n");
+        return -1;
+    }
+
+    // Calculate the CPU usage as 100% minus idle percentage
+    int cpu_usage = (int)(100.0 - idle);
+
+    return cpu_usage;
+}
+
+char* check_flash_memory_installed() {
+    FILE *fp = fopen("/proc/mtd", "r");
+    if (fp == NULL) {
+        return "not installed";
+    }
+
+    char buffer[256];
+    int found = 0;
+
+    // Skip the header line and check if there's any MTD entry
+    fgets(buffer, sizeof(buffer), fp); // Read the header line
+    while (fgets(buffer, sizeof(buffer), fp) != NULL) {
+        // If there's at least one line after the header, MTD exists
+        found = 1;
+        break;
+    }
+
+    fclose(fp);
+    return found ? "installed" : "not installed";
+}
+
+int get_memory_usage() {
+    FILE *fp = fopen("/proc/meminfo", "r");
+    if (fp == NULL) {
+        perror("Failed to open /proc/meminfo");
+        return -1;
+    }
+
+    char line[256];
+    unsigned long total_memory = 0;
+    unsigned long available_memory = 0;
+
+    // Read through /proc/meminfo and extract relevant values
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        if (strncmp(line, "MemTotal:", 9) == 0) {
+            sscanf(line + 9, "%lu", &total_memory);
+        } else if (strncmp(line, "MemAvailable:", 13) == 0) {
+            sscanf(line + 13, "%lu", &available_memory);
+            break;  // We can exit early once we have MemAvailable
+        }
+    }
+
+    fclose(fp);
+
+    if (total_memory == 0) {
+        return -1;  // Avoid division by zero
+    }
+
+    // Calculate used memory
+    unsigned long used_memory = total_memory - available_memory;
+
+    // Calculate memory usage percentage
+    int memory_usage_percentage = (int)((used_memory * 100) / total_memory);
+
+    return memory_usage_percentage;
+}
+
+char* check_sdcard_installed() {
+    FILE *fp = popen("ls /dev/mmcblk*", "r");
+    if (fp == NULL) {
+        return "not installed";
+    }
+
+    char buffer[128];
+    if (fgets(buffer, sizeof(buffer), fp) != NULL) {
+        pclose(fp);
+        return "installed";
+    } else {
+        pclose(fp);
+        return "not installed";
+    }
 }

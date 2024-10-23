@@ -11,12 +11,11 @@ MIBNode *root = NULL;
 MIBNode *nodes[MAX_NODES];
 int node_count = 0;
 
-// 새로운 MIB 노드를 추가하는 함수
 MIBNode *add_mib_node(const char *name, const char *oid, const char *type, int isWritable, const char *status, const void *value, MIBNode *parent) {
     for (int i = 0; i < node_count; i++) {
         if (strcmp(nodes[i]->oid, oid) == 0) {
             // printf("Node with OID %s already exists. Skipping...\n", oid);
-            return NULL;  // 중복된 OID가 있다면 노드를 추가하지 않음
+            return NULL;
         }
     }    
     
@@ -36,7 +35,6 @@ MIBNode *add_mib_node(const char *name, const char *oid, const char *type, int i
         return NULL;
     }
 
-    // 기본 정보 복사
     strncpy(node->name, name, sizeof(node->name) - 1);
     node->name[sizeof(node->name) - 1] = '\0';
     strncpy(node->oid, oid, sizeof(node->oid) - 1);
@@ -50,8 +48,7 @@ MIBNode *add_mib_node(const char *name, const char *oid, const char *type, int i
     node->child = NULL;
     node->next = NULL;
 
-    // type에 따라 value 설정
-    if (strcmp(type, "INTEGER") == 0) {
+    if (strcmp(type, "Integer32") == 0) {
         node->value_type = VALUE_TYPE_INT;
         node->value.int_value = *(int *)value;
     } else if (strcmp(type, "DisplayString") == 0) {
@@ -72,7 +69,6 @@ MIBNode *add_mib_node(const char *name, const char *oid, const char *type, int i
         node->value.str_value[sizeof(node->value.str_value) - 1] = '\0';
     }
 
-    // 부모-자식 관계 설정
     if (parent) {
         if (!parent->child) {
             parent->child = node;
@@ -85,10 +81,8 @@ MIBNode *add_mib_node(const char *name, const char *oid, const char *type, int i
         }
     }
 
-    // 배열에 추가 여부 결정
     if (strcmp(type, "MODULE-IDENTITY") != 0) {
         if (strcmp(type, "OBJECT IDENTIFIER") != 0 || strcmp(name, "sysObjectID") == 0) {
-            // "sysObjectID"인 경우에만 OBJECT IDENTIFIER를 추가
             nodes[node_count++] = node;
         }
     }
@@ -140,7 +134,7 @@ void parse_object_identifier(char *line) {
 
     sscanf(line, "%s OBJECT IDENTIFIER ::= { %s %d }", name, parent_name, &number);
 
-    if (strcmp(parent_name, "CAM") != 0) {
+    if (strcmp(parent_name, "cam") != 0) {
         return;
     }
 
@@ -333,17 +327,14 @@ int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
     }
 
     if (oid_parts_count < 2) {
-        // 유효하지 않은 OID
         return 0;
     }
 
-    // 첫 두 OID 부분을 하나의 바이트로 인코딩
     oid_buf[oid_buf_len++] = (unsigned char)(oid_parts[0] * 40 + oid_parts[1]);
 
-    // 나머지 OID 부분 인코딩
     for (int i = 2; i < oid_parts_count; i++) {
         unsigned int value = oid_parts[i];
-        unsigned char temp[5];  // 32비트 정수 최대 5바이트 필요
+        unsigned char temp[5];
         int temp_len = 0;
 
         do {
@@ -351,11 +342,10 @@ int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
             value >>= 7;
         } while (value > 0);
 
-        // 순서를 뒤집고 마지막 바이트를 제외한 모든 바이트에 상위 비트 설정
         for (int j = temp_len - 1; j >= 0; j--) {
             unsigned char byte = temp[j];
             if (j != 0)
-                byte |= 0x80;  // 상위 비트 설정
+                byte |= 0x80;
             oid_buf[oid_buf_len++] = byte;
         }
     }
@@ -404,7 +394,7 @@ int oid_compare(const unsigned char *oid1, int oid1_len, const unsigned char *oi
 }
 
 void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, int *response_len, MIBNode *mibEntries[], 
-                          int mibEntriesCount, int max_repetitions) {
+                          int mibEntriesCount, int non_repeaters, int max_repetitions) {
     unsigned char varbind_list[BUFFER_SIZE];
     int varbind_list_len = 0;
 
@@ -423,22 +413,92 @@ void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, i
             start_index = i; // 요청된 OID 이후의 첫 번째 항목 설정
             break;
         } else if (cmp_result == 0) {
-            // 현재 요청된 OID와 동일한 경우, 다음 항목부터 시작
             start_index = i + 1;
             break;
         }
     }
 
     if (start_index == -1) {
-        // 요청된 OID 이후의 항목이 없을 경우, 빈 응답 작성
         *response_len = 0;
         return;
     }
 
-    int repetitions = 0;
-    int varbinds_added = 0;
+    int i = start_index;
 
-    for (int i = start_index; repetitions < max_repetitions; repetitions++) {
+    for (int j = 0; j < non_repeaters && i < mibEntriesCount; j++, i++) {
+        unsigned char varbind[BUFFER_SIZE];
+        int varbind_len = 0;
+
+        // OID 인코딩
+        unsigned char oid_buffer[BUFFER_SIZE];
+        int oid_len = string_to_oid(mibEntries[i]->oid, oid_buffer);
+
+        // Value 인코딩
+        unsigned char value_buffer[BUFFER_SIZE];
+        int value_len = 0;
+        if (mibEntries[i]->value_type == VALUE_TYPE_STRING) {
+            value_len = strlen(mibEntries[i]->value.str_value);
+            memcpy(value_buffer, mibEntries[i]->value.str_value, value_len);
+        } else if (mibEntries[i]->value_type == VALUE_TYPE_INT) {
+            int int_value = mibEntries[i]->value.int_value;
+            value_len = 4;
+            value_buffer[0] = (int_value >> 24) & 0xFF;
+            value_buffer[1] = (int_value >> 16) & 0xFF;
+            value_buffer[2] = (int_value >> 8) & 0xFF;
+            value_buffer[3] = int_value & 0xFF;
+        } else if (mibEntries[i]->value_type == VALUE_TYPE_OID) {
+            value_len = string_to_oid(mibEntries[i]->value.oid_value, value_buffer);
+        } else if (mibEntries[i]->value_type == VALUE_TYPE_TIME_TICKS) {
+            unsigned long ticks_value = mibEntries[i]->value.ticks_value;
+            value_len = 4;
+            value_buffer[0] = (ticks_value >> 24) & 0xFF;
+            value_buffer[1] = (ticks_value >> 16) & 0xFF;
+            value_buffer[2] = (ticks_value >> 8) & 0xFF;
+            value_buffer[3] = ticks_value & 0xFF;
+        }
+
+        // Value 필드 작성
+        unsigned char value_field[BUFFER_SIZE];
+        int value_field_len = 0;
+        if (mibEntries[i]->value_type == VALUE_TYPE_STRING) {
+            value_field[value_field_len++] = 0x04; // OCTET STRING
+        } else if (mibEntries[i]->value_type == VALUE_TYPE_INT) {
+            value_field[value_field_len++] = 0x02; // INTEGER
+        } else if (mibEntries[i]->value_type == VALUE_TYPE_OID) {
+            value_field[value_field_len++] = 0x06; // OBJECT IDENTIFIER
+        } else if (mibEntries[i]->value_type == VALUE_TYPE_TIME_TICKS) {
+            value_field[value_field_len++] = 0x43; // TimeTicks
+        } else {
+            value_field[value_field_len++] = 0x05; // NULL
+        }
+        value_field_len += encode_length(&value_field[value_field_len], value_len);
+        memcpy(&value_field[value_field_len], value_buffer, value_len);
+        value_field_len += value_len;
+
+        // OID 필드 작성 (OBJECT IDENTIFIER)
+        unsigned char oid_field[BUFFER_SIZE];
+        int oid_field_len = 0;
+        oid_field[oid_field_len++] = 0x06; // OBJECT IDENTIFIER
+        oid_field_len += encode_length(&oid_field[oid_field_len], oid_len);
+        memcpy(&oid_field[oid_field_len], oid_buffer, oid_len);
+        oid_field_len += oid_len;
+
+        // VarBind 작성 (SEQUENCE)
+        varbind[varbind_len++] = 0x30; // SEQUENCE
+        int varbind_content_len = oid_field_len + value_field_len;
+        varbind_len += encode_length(&varbind[varbind_len], varbind_content_len);
+        memcpy(&varbind[varbind_len], oid_field, oid_field_len);
+        varbind_len += oid_field_len;
+        memcpy(&varbind[varbind_len], value_field, value_field_len);
+        varbind_len += value_field_len;
+
+        // VarBind를 VarBindList에 추가
+        memcpy(&varbind_list[varbind_list_len], varbind, varbind_len);
+        varbind_list_len += varbind_len;
+    }
+
+    // Max-repetitions 처리: 이후 max_repetitions 횟수만큼 반복
+    for (int repetitions = 0; repetitions < max_repetitions; repetitions++) {
         if (i >= mibEntriesCount) {
             // MIB 트리의 끝에 도달했을 경우, endOfMibView 추가
             unsigned char varbind[BUFFER_SIZE];
@@ -547,8 +607,7 @@ void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, i
         // VarBind를 VarBindList에 추가
         memcpy(&varbind_list[varbind_list_len], varbind, varbind_len);
         varbind_list_len += varbind_len;
-        varbinds_added++;
-        
+
         // 다음 반복을 위해 인덱스 증가
         i++;
     }
@@ -715,8 +774,8 @@ void create_snmp_response(SNMPPacket *request_packet, unsigned char *response, i
             index += value_length;
         } else if (entry->value_type == VALUE_TYPE_OID) {
             buffer[index++] = 0x06; // OBJECT IDENTIFIER
-            int oid_length = string_to_oid(entry->value.oid_value, &buffer[index + 2]);
-            index += encode_length(&buffer[index], oid_length);
+            int oid_length = string_to_oid(entry->value.oid_value, &buffer[index + 1]);
+            index += encode_length(&buffer[index], oid_length); // OID 길이를 인코딩
             index += oid_length;
         } else if (entry->value_type == VALUE_TYPE_TIME_TICKS) {
             buffer[index++] = 0x43; // TimeTicks (SNMPv2)
@@ -798,6 +857,10 @@ void update_dynamic_values() {
             nodes[i]->value.ticks_value = get_system_uptime();
         } else if (strcmp(nodes[i]->name, "dateTimeInfo") == 0) {
             strcpy(nodes[i]->value.str_value, get_date());
+        } else if (strcmp(nodes[i]->name, "cpuUsage") == 0) {
+            nodes[i]->value.int_value = get_cpuUsage();
+        } else if (strcmp(nodes[i]->name, "memoryusage") == 0) {
+            nodes[i]->value.int_value = get_memory_usage();
         }
     }
 }
@@ -822,7 +885,6 @@ void print_snmp_packet(SNMPPacket *snmp_packet) {
 }
 
 void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int sockfd, int snmp_version, const char *allowed_community) {
-    // 동적 MIB 값을 갱신하는 함수 (필요할 경우 사용)
     update_dynamic_values();
 
     SNMPPacket snmp_packet;
@@ -833,28 +895,25 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
     snmp_packet.version = -1;
 
     int index = 0;
-    parse_tlv(buffer, &index, n, &snmp_packet);  // SNMP 패킷의 TLV(타입, 길이, 값) 구조 파싱
+    parse_tlv(buffer, &index, n, &snmp_packet);
 
     // print_snmp_packet(&snmp_packet);
 
-    // 커뮤니티 이름 확인
     if (strcmp(snmp_packet.community, allowed_community) != 0) {
         printf("Unauthorized community: %s\n", snmp_packet.community);
         return;
     }
 
-    // 요청된 OID를 문자열로 변환
     char requested_oid_str[BUFFER_SIZE];
     oid_to_string(snmp_packet.oid, snmp_packet.oid_len, requested_oid_str);
 
     MIBNode *entry = NULL;
     int found = 0;
-    int error_status = SNMP_ERROR_NO_ERROR;  // 기본적으로 오류 없음으로 설정
+    int error_status = SNMP_ERROR_NO_ERROR;
 
     switch (snmp_version) {
-        case 1: // SNMPv1 처리
+        case 1: // SNMPv1 
             if (snmp_packet.pdu_type == 0xA0) { // GET-REQUEST
-                // MIB 트리에서 해당 OID 검색
                 for (int i = 0; i < node_count; i++) {
                     if (strcmp(nodes[i]->oid, requested_oid_str) == 0) {
                         entry = nodes[i];
@@ -866,7 +925,6 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
                     unsigned char response_oid[BUFFER_SIZE];
                     int response_oid_len = string_to_oid(entry->oid, response_oid);
 
-                    // SNMP 응답 생성
                     create_snmp_response(&snmp_packet, response, &response_len,
                                          response_oid, response_oid_len, entry, error_status, 0, snmp_version);
 
@@ -888,7 +946,6 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
                     unsigned char response_oid[BUFFER_SIZE];
                     int response_oid_len = string_to_oid(entry->oid, response_oid);
 
-                    // SNMP 응답 생성
                     create_snmp_response(&snmp_packet, response, &response_len,
                                          response_oid, response_oid_len, entry, error_status, 0, snmp_version);
 
@@ -911,9 +968,8 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
             }
             break;
 
-        case 2: // SNMPv2c 처리
+        case 2: // SNMPv2c
             if (snmp_packet.pdu_type == 0xA0) { // GET-REQUEST
-                // MIB 트리에서 해당 OID 검색
                 for (int i = 0; i < node_count; i++) {
                     if (strcmp(nodes[i]->oid, requested_oid_str) == 0) {
                         entry = nodes[i];
@@ -925,7 +981,6 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
                     unsigned char response_oid[BUFFER_SIZE];
                     int response_oid_len = string_to_oid(entry->oid, response_oid);
 
-                    // SNMP 응답 생성
                     create_snmp_response(&snmp_packet, response, &response_len,
                                          response_oid, response_oid_len, entry, SNMP_ERROR_NO_ERROR, 0, snmp_version);
 
@@ -946,7 +1001,6 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
                     unsigned char response_oid[BUFFER_SIZE];
                     int response_oid_len = string_to_oid(entry->oid, response_oid);
 
-                    // SNMP 응답 생성
                     create_snmp_response(&snmp_packet, response, &response_len,
                                          response_oid, response_oid_len, entry, SNMP_ERROR_NO_ERROR, 0, snmp_version);
 
@@ -967,12 +1021,14 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
                 int non_repeaters = snmp_packet.non_repeaters;
                 int max_repetitions = snmp_packet.max_repetitions;
 
-                int bulk_count = max_repetitions;
-                if (bulk_count >= node_count) {
-                    bulk_count = node_count;
-                }
+                create_bulk_response(&snmp_packet, response, &response_len, nodes, node_count, non_repeaters, max_repetitions);
 
-                create_bulk_response(&snmp_packet, response, &response_len, nodes, node_count, bulk_count);
+                if (response_len > MAX_SNMP_PACKET_SIZE) {
+                    int error_status = SNMP_ERROR_TOO_BIG;
+                    response_len = 0;
+                    create_snmp_response(&snmp_packet, response, &response_len,
+                                        snmp_packet.oid, snmp_packet.oid_len, NULL, error_status, 0, 2);
+                }
             } else {
                 printf("Unsupported PDU Type for SNMPv2c: %d\n", snmp_packet.pdu_type);
                 error_status = SNMP_EXCEPTION_END_OF_MIB_VIEW;
@@ -994,31 +1050,25 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
 int update_mib_node_value(const char *name, const void *value) {
     MIBNode *node = NULL;
 
-    // 이름을 기준으로 노드를 검색 (디버깅 정보를 추가)
     for (int i = 0; i < node_count; i++) {
-        // printf("Searching node %d: Name='%s'\n", i, nodes[i]->name);  // 디버깅용 출력
+        // printf("Searching node %d: Name='%s'\n", i, nodes[i]->name);
         if (strcmp(nodes[i]->name, name) == 0) {
             node = nodes[i];
             break;
         }
     }
 
-    // 노드를 찾지 못한 경우 오류 처리
     if (!node) {
         printf("Error: Node %s not found.\n", name);
         return -1;
     }
 
-    // 타입에 따라 값을 업데이트
     if (node->value_type == VALUE_TYPE_INT) {
         node->value.int_value = *(int *)value;
     } else if (node->value_type == VALUE_TYPE_STRING) {
-        printf("Updating node '%s' with value: %s\n", name, (char *)value); // 디버깅용 출력
+        // printf("Updating node '%s' with value: %s\n", name, (char *)value);
         strncpy(node->value.str_value, (const char *)value, sizeof(node->value.str_value) - 1);
         node->value.str_value[sizeof(node->value.str_value) - 1] = '\0';
-    } else if (node->value_type == VALUE_TYPE_OID) {
-        strncpy(node->value.oid_value, (const char *)value, sizeof(node->value.oid_value) - 1);
-        node->value.oid_value[sizeof(node->value.oid_value) - 1] = '\0';
     } else if (node->value_type == VALUE_TYPE_TIME_TICKS) {
         node->value.ticks_value = *(unsigned long *)value;
     } else {
@@ -1026,7 +1076,7 @@ int update_mib_node_value(const char *name, const void *value) {
         return -1;
     }
 
-    printf("Node %s updated successfully with new value.\n", name);
+    // printf("Node %s updated successfully with new value.\n", name);
     return 0;
 }
 
@@ -1060,7 +1110,7 @@ int main(int argc, char *argv[]) {
         printf("Using default SNMP version 1 and community 'public'\n");
     }
 
-    FILE *file = fopen("snmp_mib.txt", "r");
+    FILE *file = fopen("CAMERA-MIB.txt", "r");
     if (!file) {
         perror("Error opening file");
         return 1;
@@ -1070,24 +1120,16 @@ int main(int argc, char *argv[]) {
     add_mib_node("sysDescr", "1.3.6.1.2.1.1.1.0", "DisplayString", HANDLER_CAN_RONLY, "current", 
                 "IP Camera", NULL);
 
-    // sysObjectID 노드: OBJECT IDENTIFIER 타입 (문자열)
     add_mib_node("sysObjectID", "1.3.6.1.2.1.1.2.0", "OBJECT IDENTIFIER", HANDLER_CAN_RONLY, "current", 
-                 "1.3.6.1.4.1.127", NULL);
-
-    // sysUpTime 노드: TimeTicks 타입 (정수형)
-    unsigned long uptime = get_system_uptime();  // uptime 값을 가져옴
+                 "1.3.6.1.4.1.127.1.9", NULL);
+    unsigned long uptime = get_system_uptime();
     add_mib_node("sysUpTime", "1.3.6.1.2.1.1.3.0", "TimeTicks", HANDLER_CAN_RONLY, "current", 
                 &uptime, NULL);
-
-    // sysContact 노드: DisplayString 타입 (문자열)
     add_mib_node("sysContact", "1.3.6.1.2.1.1.4.0", "DisplayString", HANDLER_CAN_RWRITE, "current", 
                 "admin@example.com", NULL);
-
-    // sysName 노드: DisplayString 타입 (문자열)
     add_mib_node("sysName", "1.3.6.1.2.1.1.5.0", "DisplayString", HANDLER_CAN_RWRITE, "current", 
                 "EN675", NULL);
-
-    root = add_mib_node("CAM", "1.3.6.1.4.1.127", "MODULE-IDENTITY", 0, "current", "", NULL);
+    root = add_mib_node("cam", "1.3.6.1.4.1.127.1", "MODULE-IDENTITY", 0, "current", "", NULL);
 
     char line[256];
 
@@ -1109,24 +1151,27 @@ int main(int argc, char *argv[]) {
     }
 
     fclose(file);
+
+    int cpu_usage = get_cpuUsage();
+    int memory_usage = get_memory_usage();
     
     // -- System Information
     update_mib_node_value("modelName", "eyenix EN675");
     update_mib_node_value("versionInfo", get_version());
     update_mib_node_value("dateTimeInfo", get_date());
-    update_mib_node_value("cpuUsage", get_date());
+    update_mib_node_value("cpuUsage", &cpu_usage);
 
     // -- Network Information
-    update_mib_node_value("macAddress", get_mac_address());
-    update_mib_node_value("ipAddress", get_current_ip());
+    update_mib_node_value("macAddressInfo", get_mac_address());
+    update_mib_node_value("ipAddressInfo", get_current_ip());
     update_mib_node_value("gateway", get_current_gateway());
     update_mib_node_value("subnetMask", get_current_netmask());
 
     // -- Storage Information
-    // update_mib_node_value("sdCardStatus", "eyenix EN675");
+    update_mib_node_value("flashStatus", check_flash_memory_installed());
+    update_mib_node_value("memoryusage", &memory_usage);
+    update_mib_node_value("sdCardStatus", check_sdcard_installed());
     // update_mib_node_value("sdCardCapacity", get_version());
-    // update_mib_node_value("hddStatus", get_date());
-    // update_mib_node_value("hddCapacity", get_date());
 
     // print_all_mib_nodes();
 
@@ -1150,7 +1195,6 @@ int main(int argc, char *argv[]) {
         socklen_t len = sizeof(cliaddr);
         int n = recvfrom(sockfd, (char *)buffer, BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
 
-        // SNMP 요청 처리 시 SNMP 버전과 커뮤니티 이름을 전달
         snmp_request(buffer, n, &cliaddr, sockfd, snmp_version, allowed_community);
     }
 
