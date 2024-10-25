@@ -279,6 +279,47 @@ int get_cpuUsage() {
     return cpu_usage;
 }
 
+char* get_cpu_load(int duration) {
+    FILE *fp = fopen("/proc/loadavg", "r");
+    if (fp == NULL) {
+        perror("Failed to open /proc/loadavg");
+        return NULL;
+    }
+
+    double load_1min, load_5min, load_15min;
+    // Read the first three values from /proc/loadavg
+    if (fscanf(fp, "%lf %lf %lf", &load_1min, &load_5min, &load_15min) != 3) {
+        perror("Failed to read /proc/loadavg");
+        fclose(fp);
+        return NULL;
+    }
+
+    fclose(fp);
+
+    double selected_load;
+    // Select the appropriate load average based on the duration
+    if (duration == 1) {
+        selected_load = load_1min;
+    } else if (duration == 5) {
+        selected_load = load_5min;
+    } else if (duration == 15) {
+        selected_load = load_15min;
+    } else {
+        fprintf(stderr, "Invalid duration. Use 1, 5, or 15.\n");
+        return NULL;
+    }
+
+    // Convert the selected load average to a string
+    char *result = (char *)malloc(16); // Allocate memory for the result string
+    if (result == NULL) {
+        perror("Failed to allocate memory");
+        return NULL;
+    }
+
+    snprintf(result, 16, "%.2f", selected_load); // Format the load average to a string with 2 decimal places
+    return result;
+}
+
 char* check_flash_memory_installed() {
     FILE *fp = fopen("/proc/mtd", "r");
     if (fp == NULL) {

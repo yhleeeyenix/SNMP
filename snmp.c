@@ -237,6 +237,15 @@ int read_length(unsigned char *buffer, int *index) {
     return len;
 }
 
+int read_integer(unsigned char *buffer, int *index, int len) {
+    int value = 0;
+    for (int i = 0; i < len; i++) {
+        value = (value << 8) | buffer[*index];
+        (*index)++;
+    }
+    return value;
+}
+
 // ASN.1 BER 형식의 길이 필드 인코딩
 int write_length(unsigned char *buffer, int len) {
     if (len < 0) {
@@ -312,6 +321,484 @@ void parse_tlv(unsigned char *buffer, int *index, int length, SNMPPacket *snmp_p
     }
 }
 
+void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet) {
+    unsigned char type = buffer[*index - 1]; // PDU 타입은 이미 읽었습니다.
+    snmp_packet->pdu_type = type;
+
+    int len = length; // 이미 길이를 읽었으므로 그대로 사용
+
+    int pdu_end = (*index) + len;
+
+    // 1. request-id
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid request-id Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->request_id = read_integer(buffer, index, len);
+
+    // 2. error-status
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid error-status Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->error_status = read_integer(buffer, index, len);
+
+    // 3. error-index
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid error-index Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->error_index = read_integer(buffer, index, len);
+
+    // 4. variable-bindings
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x30) {
+        printf("Invalid variable-bindings Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    int varbind_list_end = (*index) + len;
+
+    snmp_packet->varbind_count = 0;
+
+    // VarBindList 파싱
+    while (*index < varbind_list_end) {
+        // VarBind SEQUENCE
+        type = buffer[*index];
+        (*index)++;
+        if (type != 0x30) {
+            printf("Invalid VarBind Type\n");
+            return;
+        }
+        len = read_length(buffer, index);
+        int varbind_end = (*index) + len;
+
+        // OID
+        type = buffer[*index];
+        (*index)++;
+        if (type != 0x06) {
+            printf("Invalid OID Type\n");
+            return;
+        }
+        len = read_length(buffer, index);
+        memcpy(snmp_packet->varbind_list[snmp_packet->varbind_count].oid, &buffer[*index], len);
+        snmp_packet->varbind_list[snmp_packet->varbind_count].oid_len = len;
+        (*index) += len;
+
+        // Value
+        type = buffer[*index];
+        (*index)++;
+        len = read_length(buffer, index);
+        snmp_packet->varbind_list[snmp_packet->varbind_count].value_type = type;
+        memcpy(snmp_packet->varbind_list[snmp_packet->varbind_count].value, &buffer[*index], len);
+        snmp_packet->varbind_list[snmp_packet->varbind_count].value_len = len;
+        (*index) += len;
+
+        snmp_packet->varbind_count++;
+    }
+}
+
+void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet) {
+    unsigned char type;
+    int len;
+
+    // ScopedPDU SEQUENCE
+    if (*index >= length) {
+        printf("Index out of bounds while reading ScopedPDU\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x30) {
+        printf("Invalid ScopedPDU Type\n");
+        return;
+    }
+
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for ScopedPDU\n");
+        return;
+    }
+    int seq_end = (*index) + len;
+
+    // 1. contextEngineID
+    if (*index >= seq_end) {
+        printf("Index out of bounds while reading contextEngineID\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid contextEngineID Type\n");
+        return;
+    }
+
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > seq_end) {
+        printf("Invalid length for contextEngineID\n");
+        return;
+    }
+    memcpy(snmp_packet->contextEngineID, &buffer[*index], len);
+    snmp_packet->contextEngineID_len = len;
+    (*index) += len;
+
+    // 2. contextName
+    if (*index >= seq_end) {
+        printf("Index out of bounds while reading contextName\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid contextName Type\n");
+        return;
+    }
+
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > seq_end) {
+        printf("Invalid length for contextName\n");
+        return;
+    }
+    memcpy(snmp_packet->contextName, &buffer[*index], len);
+    snmp_packet->contextName[len] = '\0';
+    (*index) += len;
+
+    // 3. data (PDU)
+    if (*index >= seq_end) {
+        printf("Index out of bounds while reading data PDU\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > seq_end) {
+        printf("Invalid length for data PDU\n");
+        return;
+    }
+
+    parse_pdu(buffer, index, len, snmp_packet);
+}
+
+
+void parse_usm_security_parameters(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet) {
+    unsigned char type;
+    int len;
+
+    // USM SEQUENCE
+    if (*index >= length) {
+        printf("Index out of bounds while reading USM Sequence\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x30) {
+        printf("Invalid USM Sequence Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for USM Sequence\n");
+        return;
+    }
+    int seq_end = (*index) + len;
+
+    // 1. msgAuthoritativeEngineID
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgAuthoritativeEngineID\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid msgAuthoritativeEngineID Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgAuthoritativeEngineID\n");
+        return;
+    }
+    memcpy(snmp_packet->msgAuthoritativeEngineID, &buffer[*index], len);
+    snmp_packet->msgAuthoritativeEngineID_len = len;
+    (*index) += len;
+
+    // 2. msgAuthoritativeEngineBoots
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgAuthoritativeEngineBoots\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid msgAuthoritativeEngineBoots Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->msgAuthoritativeEngineBoots = read_integer(buffer, index, len);
+
+    // 3. msgAuthoritativeEngineTime
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgAuthoritativeEngineTime\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid msgAuthoritativeEngineTime Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->msgAuthoritativeEngineTime = read_integer(buffer, index, len);
+
+    // 4. msgUserName
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgUserName\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid msgUserName Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgUserName\n");
+        return;
+    }
+    memcpy(snmp_packet->msgUserName, &buffer[*index], len);
+    snmp_packet->msgUserName[len] = '\0';
+    (*index) += len;
+
+    // 5. msgAuthenticationParameters
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgAuthenticationParameters\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid msgAuthenticationParameters Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgAuthenticationParameters\n");
+        return;
+    }
+    memcpy(snmp_packet->msgAuthenticationParameters, &buffer[*index], len);
+    snmp_packet->msgAuthenticationParameters_len = len;
+    (*index) += len;
+
+    // 6. msgPrivacyParameters
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgPrivacyParameters\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid msgPrivacyParameters Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgPrivacyParameters\n");
+        return;
+    }
+    memcpy(snmp_packet->msgPrivacyParameters, &buffer[*index], len);
+    snmp_packet->msgPrivacyParameters_len = len;
+    (*index) += len;
+}
+
+void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet) {
+    unsigned char type;
+    int len;
+
+    // 1. SNMPv3Message (SEQUENCE)
+    if (*index >= length) {
+        printf("Index out of bounds while reading SNMPv3 Message Type\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x30) {
+        printf("Invalid SNMPv3 Message Type\n");
+        return;
+    }
+    
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for SNMPv3 Message\n");
+        return;
+    }
+    int seq_end = *index + len;
+
+    // 2. msgVersion
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgVersion\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid msgVersion Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->version = read_integer(buffer, index, len);
+
+    // 3. msgGlobalData (HeaderData)
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgGlobalData\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x30) {
+        printf("Invalid msgGlobalData Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgGlobalData\n");
+        return;
+    }
+    int header_end = *index + len;
+
+    // 3.1 msgID
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgID\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid msgID Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->msgID = read_integer(buffer, index, len);
+
+    // 3.2 msgMaxSize
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgMaxSize\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid msgMaxSize Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->msgMaxSize = read_integer(buffer, index, len);
+
+    // 3.3 msgFlags
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgFlags\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) {
+        printf("Invalid msgFlags Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgFlags\n");
+        return;
+    }
+    memcpy(snmp_packet->msgFlags, &buffer[*index], len);
+    (*index) += len;
+
+    // 3.4 msgSecurityModel
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgSecurityModel\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x02) {
+        printf("Invalid msgSecurityModel Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    snmp_packet->msgSecurityModel = read_integer(buffer, index, len);
+
+    // 4. msgSecurityParameters
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgSecurityParameters\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type != 0x04) { // OCTET STRING 타입 확인
+        printf("Invalid msgSecurityParameters Type\n");
+        return;
+    }
+    len = read_length(buffer, index);
+    if (len < 0 || *index + len > length) {
+        printf("Invalid length for msgSecurityParameters\n");
+        return;
+    }
+
+    // msgSecurityParameters를 임시 버퍼에 저장하여 파싱
+    unsigned char sec_params_buffer[BUFFER_SIZE];
+    memcpy(sec_params_buffer, &buffer[*index], len);
+    (*index) += len;
+
+    int sec_params_index = 0;
+    parse_usm_security_parameters(sec_params_buffer, &sec_params_index, len, snmp_packet);
+
+    // 5. msgData (ScopedPDUData)
+    if (*index >= length) {
+        printf("Index out of bounds while reading msgData\n");
+        return;
+    }
+    type = buffer[*index];
+    (*index)++;
+    if (type == 0x04) { // OCTET STRING (plaintext)
+        len = read_length(buffer, index);
+        if (len < 0 || *index + len > length) {
+            printf("Invalid length for msgData OCTET STRING\n");
+            return;
+        }
+
+        // ScopedPDU 파싱
+        unsigned char scoped_pdu_buffer[BUFFER_SIZE];
+        memcpy(scoped_pdu_buffer, &buffer[*index], len);
+        (*index) += len;
+
+        int scoped_pdu_index = 0;
+        // 여기서는 인덱스를 0으로 설정하고, ScopedPDU의 길이를 len으로 설정하여 파싱
+        parse_scoped_pdu(scoped_pdu_buffer, &scoped_pdu_index, len, snmp_packet);
+    } else if (type == 0x30) { // SEQUENCE (ScopedPDU directly)
+        (*index)--; // 타입 바이트를 다시 읽기 위해 인덱스 감소
+        int scoped_pdu_start = *index; // ScopedPDU 시작 위치
+        int remaining_length = length - scoped_pdu_start;
+
+        // parse_scoped_pdu를 호출할 때 index를 0으로 설정하고, length를 remaining_length로 설정합니다.
+        int scoped_pdu_index = 0;
+        parse_scoped_pdu(&buffer[scoped_pdu_start], &scoped_pdu_index, remaining_length, snmp_packet);
+    } else {
+        printf("Invalid msgData Type: %02X\n", type);
+        return;
+    }
+}
+
+
 int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
     int oid_buf_len = 0;
     unsigned int oid_parts[128];
@@ -373,6 +860,73 @@ int encode_length(unsigned char *buffer, int length) {
     }
 }
 
+int encode_oid(const oid *oid_numbers, int oid_len, unsigned char *buffer) {
+    int buf_len = 0;
+
+    if (oid_len < 2) {
+        return 0; // Invalid OID
+    }
+
+    buffer[buf_len++] = (unsigned char)(oid_numbers[0] * 40 + oid_numbers[1]);
+
+    for (int i = 2; i < oid_len; i++) {
+        unsigned long value = oid_numbers[i];
+        unsigned char temp[10];
+        int temp_len = 0;
+
+        do {
+            temp[temp_len++] = value & 0x7F;
+            value >>= 7;
+        } while (value > 0);
+
+        for (int j = temp_len - 1; j >= 0; j--) {
+            buffer[buf_len++] = temp[j] | (j != 0 ? 0x80 : 0x00);
+        }
+    }
+
+    return buf_len;
+}
+
+int encode_length_at(unsigned char *buffer, int length) {
+    unsigned char temp[10];
+    int len_bytes = encode_length(temp, length);
+
+    // Move existing data to make space for length bytes
+    memmove(buffer + len_bytes, buffer + 1, length);
+
+    // Copy the length bytes into the buffer
+    memcpy(buffer, temp, len_bytes);
+
+    return len_bytes;
+}
+
+
+int encode_integer(long value, unsigned char *buffer) {
+    int buf_len = 0;
+    unsigned long val = (unsigned long)value;
+
+    // Determine the number of bytes needed
+    int num_bytes = 0;
+    unsigned long temp = val;
+    do {
+        temp >>= 8;
+        num_bytes++;
+    } while (temp > 0);
+
+    // If the most significant bit is 1, prepend a zero byte
+    if ((val >> ((num_bytes - 1) * 8)) & 0x80) {
+        buffer[buf_len++] = 0x00;
+        num_bytes++;
+    }
+
+    for (int i = num_bytes - 1; i >= 0; i--) {
+        buffer[buf_len++] = (val >> (i * 8)) & 0xFF;
+    }
+
+    return buf_len;
+}
+
+
 int oid_compare(const unsigned char *oid1, int oid1_len, const unsigned char *oid2, int oid2_len) {
     int min_len = oid1_len < oid2_len ? oid1_len : oid2_len;
 
@@ -392,6 +946,302 @@ int oid_compare(const unsigned char *oid1, int oid1_len, const unsigned char *oi
 
     return 0;
 }
+
+void create_snmpv3_report_response(SNMPv3Packet *request_packet, unsigned char *response, int *response_len, int error) {
+    // Report PDU OIDs
+    static const oid unknownSecurityLevel[] = {1, 3, 6, 1, 6, 3, 15, 1, 1, 1, 0};
+    static const oid notInTimeWindow[]      = {1, 3, 6, 1, 6, 3, 15, 1, 1, 2, 0};
+    static const oid unknownUserName[]      = {1, 3, 6, 1, 6, 3, 15, 1, 1, 3, 0};
+    static const oid unknownEngineID[]      = {1, 3, 6, 1, 6, 3, 15, 1, 1, 4, 0};
+    static const oid wrongDigest[]          = {1, 3, 6, 1, 6, 3, 15, 1, 1, 5, 0};
+    static const oid decryptionError[]      = {1, 3, 6, 1, 6, 3, 15, 1, 1, 6, 0};
+
+    const oid *err_oid;
+    int err_oid_len;
+
+    // Choose the appropriate error OID based on the error type
+    switch (error) {
+        case SNMPERR_USM_UNKNOWNENGINEID:
+            err_oid = unknownEngineID;
+            err_oid_len = sizeof(unknownEngineID) / sizeof(oid);
+            break;
+        case SNMPERR_USM_UNKNOWNSECURITYNAME:
+            err_oid = unknownUserName;
+            err_oid_len = sizeof(unknownUserName) / sizeof(oid);
+            break;
+        case SNMPERR_USM_UNSUPPORTEDSECURITYLEVEL:
+            err_oid = unknownSecurityLevel;
+            err_oid_len = sizeof(unknownSecurityLevel) / sizeof(oid);
+            break;
+        case SNMPERR_USM_AUTHENTICATIONFAILURE:
+            err_oid = wrongDigest;
+            err_oid_len = sizeof(wrongDigest) / sizeof(oid);
+            break;
+        case SNMPERR_USM_NOTINTIMEWINDOW:
+            err_oid = notInTimeWindow;
+            err_oid_len = sizeof(notInTimeWindow) / sizeof(oid);
+            break;
+        case SNMPERR_USM_DECRYPTIONERROR:
+            err_oid = decryptionError;
+            err_oid_len = sizeof(decryptionError) / sizeof(oid);
+            break;
+        default:
+            printf("Unknown SNMPv3 error type: %d\n", error);
+            *response_len = 0;
+            return;
+    }
+
+    // Agent's own Engine ID
+    static const unsigned char engine_id[] = {
+        // Example Engine ID, should be unique for your agent
+        0x80, 0x00, 0x1F, 0x88, 0x80, 0x41, 0x17, 0xB5,
+        0x74, 0xA4, 0xAA, 0xDF, 0x66
+    };
+    int engine_id_len = sizeof(engine_id);
+
+    // Report PDU construction
+    unsigned char report_pdu[BUFFER_SIZE];
+    int pdu_len = 0;
+
+    report_pdu[pdu_len++] = 0xA8; // REPORT PDU
+    int pdu_length_pos = pdu_len++; // PDU length position placeholder
+
+    // Request ID
+    unsigned char request_id_buf[5];
+    int request_id_len = encode_integer(request_packet->request_id, request_id_buf);
+
+    report_pdu[pdu_len++] = 0x02; // INTEGER
+    pdu_len += encode_length(&report_pdu[pdu_len], request_id_len);
+    memcpy(&report_pdu[pdu_len], request_id_buf, request_id_len);
+    pdu_len += request_id_len;
+
+    // Error Status
+    report_pdu[pdu_len++] = 0x02; // INTEGER
+    report_pdu[pdu_len++] = 0x01; // Length
+    report_pdu[pdu_len++] = 0x00; // noError
+
+    // Error Index
+    report_pdu[pdu_len++] = 0x02; // INTEGER
+    report_pdu[pdu_len++] = 0x01; // Length
+    report_pdu[pdu_len++] = 0x00; // noError
+
+    // Variable Bindings
+    report_pdu[pdu_len++] = 0x30; // SEQUENCE
+    int varbind_list_len_pos = pdu_len++; // Length placeholder
+
+    // Variable Binding
+    report_pdu[pdu_len++] = 0x30; // SEQUENCE
+    int varbind_len_pos = pdu_len++; // Length placeholder
+
+    // OID
+    unsigned char oid_buffer[64];
+    int oid_encoded_len = encode_oid(err_oid, err_oid_len, oid_buffer);
+
+    report_pdu[pdu_len++] = 0x06; // OBJECT IDENTIFIER
+    pdu_len += encode_length(&report_pdu[pdu_len], oid_encoded_len);
+    memcpy(&report_pdu[pdu_len], oid_buffer, oid_encoded_len);
+    pdu_len += oid_encoded_len;
+
+    // Value (Counter32 with value 1)
+    report_pdu[pdu_len++] = 0x41; // Counter32
+    unsigned char error_counter_buf[5];
+    int error_counter_len = encode_integer(1, error_counter_buf);
+
+    pdu_len += encode_length(&report_pdu[pdu_len], error_counter_len);
+    memcpy(&report_pdu[pdu_len], error_counter_buf, error_counter_len);
+    pdu_len += error_counter_len;
+
+    // Variable Binding Length
+    int varbind_len = pdu_len - varbind_len_pos - 1;
+    int len_bytes_varbind  = encode_length_at(&report_pdu[varbind_len_pos], varbind_len);
+    pdu_len += (len_bytes_varbind  - 1);
+
+    // Variable Bindings Length
+    int varbind_list_len = pdu_len - varbind_list_len_pos - 1;
+    len_bytes_varbind  = encode_length_at(&report_pdu[varbind_list_len_pos], varbind_list_len);
+    pdu_len += (len_bytes_varbind  - 1);
+
+    // PDU Length
+    int pdu_content_length = pdu_len - pdu_length_pos - 1;
+    len_bytes_varbind  = encode_length_at(&report_pdu[pdu_length_pos], pdu_content_length);
+    pdu_len += (len_bytes_varbind  - 1);
+
+    // SNMPv3 Message construction
+    unsigned char buffer[BUFFER_SIZE];
+    int index = 0;
+
+    buffer[index++] = 0x30; // SEQUENCE
+    int snmp_msg_length_pos = index++; // Length placeholder
+
+    // msgVersion
+    buffer[index++] = 0x02; // INTEGER
+    buffer[index++] = 0x01; // Length
+    buffer[index++] = 0x03; // Version 3
+
+    // msgGlobalData
+    buffer[index++] = 0x30; // SEQUENCE
+    int global_data_length_pos = index++; // Length placeholder
+
+    // msgID
+    unsigned char msg_id_buf[5];
+    int msg_id_len = encode_integer(request_packet->msgID, msg_id_buf);
+
+    buffer[index++] = 0x02; // INTEGER
+    index += encode_length(&buffer[index], msg_id_len);
+    memcpy(&buffer[index], msg_id_buf, msg_id_len);
+    index += msg_id_len;
+
+    // msgMaxSize
+    unsigned char msg_max_size_buf[5];
+    int msg_max_size_len = encode_integer(request_packet->msgMaxSize, msg_max_size_buf);
+
+    buffer[index++] = 0x02; // INTEGER
+    index += encode_length(&buffer[index], msg_max_size_len);
+    memcpy(&buffer[index], msg_max_size_buf, msg_max_size_len);
+    index += msg_max_size_len;
+
+    // msgFlags
+    buffer[index++] = 0x04; // OCTET STRING
+    buffer[index++] = 0x01; // Length
+
+    // msgFlags 초기화 (reportableFlag 설정)
+    unsigned char msg_flags = 0x04;
+
+    // 오류 유형에 따른 보안 수준 설정
+    if (error == SNMPERR_USM_UNKNOWNENGINEID) {
+        // 인증 필요 (authNoPriv)
+        msg_flags = 0x00;
+    } else {
+        // noAuthNoPriv (기본값)
+        // msg_flags는 이미 0x04로 설정되어 있음
+    }
+
+    // msgFlags 적용
+    buffer[index++] = msg_flags;
+
+    // msgSecurityModel
+    buffer[index++] = 0x02; // INTEGER
+    buffer[index++] = 0x01; // Length
+    buffer[index++] = request_packet->msgSecurityModel;
+
+    // msgGlobalData Length
+    int global_data_length = index - global_data_length_pos - 1;
+    len_bytes_varbind  = encode_length_at(&buffer[global_data_length_pos], global_data_length);
+    index += (len_bytes_varbind  - 1);
+
+    // msgSecurityParameters
+    buffer[index++] = 0x04; // OCTET STRING
+    int sec_params_length_pos = index++; // Length placeholder
+
+    // Encode USM Security Parameters
+    unsigned char sec_params_buffer[BUFFER_SIZE];
+    int sec_params_index = 0;
+
+    sec_params_buffer[sec_params_index++] = 0x30; // SEQUENCE
+    int usm_length_pos = sec_params_index++; // Length placeholder
+
+    // msgAuthoritativeEngineID (Agent's own engine ID)
+    sec_params_buffer[sec_params_index++] = 0x04; // OCTET STRING
+    sec_params_index += encode_length(&sec_params_buffer[sec_params_index], engine_id_len);
+    memcpy(&sec_params_buffer[sec_params_index], engine_id, engine_id_len);
+    sec_params_index += engine_id_len;
+
+    // msgAuthoritativeEngineBoots (set to 0)
+    sec_params_buffer[sec_params_index++] = 0x02; // INTEGER
+    unsigned char boots_buf[5];
+    int boots_len = encode_integer(0, boots_buf);
+    sec_params_index += encode_length(&sec_params_buffer[sec_params_index], boots_len);
+    memcpy(&sec_params_buffer[sec_params_index], boots_buf, boots_len);
+    sec_params_index += boots_len;
+
+    // msgAuthoritativeEngineTime (set to 0)
+    sec_params_buffer[sec_params_index++] = 0x02; // INTEGER
+    unsigned char time_buf[5];
+    int time_len = encode_integer(0, time_buf);
+    sec_params_index += encode_length(&sec_params_buffer[sec_params_index], time_len);
+    memcpy(&sec_params_buffer[sec_params_index], time_buf, time_len);
+    sec_params_index += time_len;
+
+    // msgUserName (empty string)
+    sec_params_buffer[sec_params_index++] = 0x04; // OCTET STRING
+    sec_params_buffer[sec_params_index++] = 0x00; // Length
+    // No user name to copy
+
+    // msgAuthenticationParameters (empty string)
+    sec_params_buffer[sec_params_index++] = 0x04; // OCTET STRING
+    sec_params_buffer[sec_params_index++] = 0x00; // Length
+    // No auth parameters
+
+    // msgPrivacyParameters (empty string)
+    sec_params_buffer[sec_params_index++] = 0x04; // OCTET STRING
+    sec_params_buffer[sec_params_index++] = 0x00; // Length
+    // No privacy parameters
+
+    // Update USM length
+    int usm_length = sec_params_index - usm_length_pos - 1;
+    len_bytes_varbind  = encode_length_at(&sec_params_buffer[usm_length_pos], usm_length);
+    sec_params_index += (len_bytes_varbind  - 1);
+
+    // Copy Security Parameters to buffer
+    memcpy(&buffer[index], sec_params_buffer, sec_params_index);
+    index += sec_params_index;
+
+    // Calculate length of msgSecurityParameters
+    int sec_params_length = index - sec_params_length_pos - 1;
+    len_bytes_varbind  = encode_length_at(&buffer[sec_params_length_pos], sec_params_length);
+    index += (len_bytes_varbind  - 1);
+
+    // msgData (ScopedPDUData)
+    // 암호화를 사용하지 않으므로 ScopedPDU를 직접 포함
+    int scoped_pdu_start = index; // ScopedPDU 시작 위치
+
+    // ScopedPDU 생성
+    unsigned char scoped_pdu[BUFFER_SIZE];
+    int scoped_index = 0;
+
+    // ScopedPDU SEQUENCE 시작
+    scoped_pdu[scoped_index++] = 0x30; // SEQUENCE
+    int scoped_pdu_length_pos = scoped_index++; // Length placeholder
+
+    // contextEngineID (에이전트의 엔진 ID)
+    scoped_pdu[scoped_index++] = 0x04; // OCTET STRING
+    scoped_pdu[scoped_index++] = engine_id_len;
+    memcpy(&scoped_pdu[scoped_index], engine_id, engine_id_len);
+    scoped_index += engine_id_len;
+
+    // contextName (빈 문자열)
+    scoped_pdu[scoped_index++] = 0x04; // OCTET STRING
+    scoped_pdu[scoped_index++] = 0x00;
+    // contextName 없음
+
+    // data (Report PDU)
+    memcpy(&scoped_pdu[scoped_index], report_pdu, pdu_len);
+    scoped_index += pdu_len;
+
+    // ScopedPDU 길이 설정
+    int scoped_pdu_length = scoped_index - scoped_pdu_length_pos - 1;
+    int len_bytes = encode_length_at(&scoped_pdu[scoped_pdu_length_pos], scoped_pdu_length);
+    scoped_index += (len_bytes - 1);
+
+    // ScopedPDU를 메인 버퍼에 복사
+    memcpy(&buffer[index], scoped_pdu, scoped_index);
+    index += scoped_index;
+
+    // msgData 길이 계산 및 설정이 필요하지 않음 (ScopedPDU를 직접 포함하므로)
+
+    // SNMPv3Message 전체 길이 설정
+    int snmp_msg_length = index - snmp_msg_length_pos - 1;
+    len_bytes = encode_length_at(&buffer[snmp_msg_length_pos], snmp_msg_length);
+    index += (len_bytes - 1);
+
+
+    // Copy the response to the output
+    *response_len = index;
+    memcpy(response, buffer, index);
+}
+
+
+
 
 void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, int *response_len, MIBNode *mibEntries[], 
                           int mibEntriesCount, int non_repeaters, int max_repetitions) {
@@ -791,11 +1641,9 @@ void create_snmp_response(SNMPPacket *request_packet, unsigned char *response, i
         }
     } else {
         if (snmp_version == 1) {
-            // SNMPv1에서는 에러 상태를 사용하고 값은 NULL로 설정
             buffer[index++] = 0x05; // NULL
             index += encode_length(&buffer[index], 0);
         } else if (snmp_version == 2) {
-            // SNMPv2c에서는 Exception을 값으로 반환
             switch (error_status) {
                 case SNMP_EXCEPTION_NO_SUCH_OBJECT:
                     buffer[index++] = 0x80; // noSuchObject
@@ -886,6 +1734,55 @@ void print_snmp_packet(SNMPPacket *snmp_packet) {
 
 void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int sockfd, int snmp_version, const char *allowed_community) {
     update_dynamic_values();
+
+    if (snmp_version == 3) {
+        SNMPv3Packet snmp_packet;
+        memset(&snmp_packet, 0, sizeof(SNMPv3Packet));
+
+        int index = 0;
+        parse_snmpv3_message(buffer, &index, n, &snmp_packet);
+
+        // 파싱 결과 출력
+        printf("SNMP Version: %d\n", snmp_packet.version);
+        printf("msgID: %d\n", snmp_packet.msgID);
+        printf("msgAuthoritativeEngineID: ");
+        for (int i = 0; i < 32; i++) {
+            printf("%02X ", snmp_packet.msgAuthoritativeEngineID[i]);
+        }
+        printf("\n");
+        printf("msgMaxSize: %d\n", snmp_packet.msgMaxSize);
+        printf("msgFlags: %02X\n", snmp_packet.msgFlags[0]);
+        printf("msgSecurityModel: %d\n", snmp_packet.msgSecurityModel);
+        printf("msgUserName: %s\n", snmp_packet.msgUserName);
+        printf("PDU Type: %02X\n", snmp_packet.pdu_type);
+        printf("Request ID: %d\n", snmp_packet.request_id);
+        printf("Error Status: %d\n", snmp_packet.error_status);
+        printf("Error Index: %d\n", snmp_packet.error_index);
+        printf("VarBind Count: %d\n", snmp_packet.varbind_count);
+
+        for (int i = 0; i < snmp_packet.varbind_count; i++) {
+            printf("VarBind %d:\n", i + 1);
+            printf("  OID: ");
+            for (int j = 0; j < snmp_packet.varbind_list[i].oid_len; j++) {
+                printf("%02X ", snmp_packet.varbind_list[i].oid[j]);
+            }
+            printf("\n");
+            printf("  Value Type: %02X\n", snmp_packet.varbind_list[i].value_type);
+            printf("  Value Length: %d\n", snmp_packet.varbind_list[i].value_len);
+        }
+
+
+        unsigned char response[BUFFER_SIZE];
+        int response_len = 0;
+        
+        // 보고서 응답 생성
+        create_snmpv3_report_response(&snmp_packet, response, &response_len, SNMPERR_USM_UNKNOWNENGINEID);
+
+        // 응답 전송
+        if (response_len > 0) {
+            sendto(sockfd, response, response_len, 0, (struct sockaddr *)cliaddr, sizeof(*cliaddr));
+        }
+    }
 
     SNMPPacket snmp_packet;
     unsigned char response[BUFFER_SIZE];
@@ -1080,6 +1977,14 @@ int update_mib_node_value(const char *name, const void *value) {
     return 0;
 }
 
+void free_mib_nodes() {
+    for (int i = 0; i < node_count; i++) {
+        free(nodes[i]);
+    }
+    node_count = 0;
+
+    printf("free_mib_nodes\n");
+}
 
 int main(int argc, char *argv[]) {
     int sockfd;
@@ -1092,24 +1997,69 @@ int main(int argc, char *argv[]) {
     // default snmp version
     int snmp_version = 1;
 
+    // SNMPv3 authentication parameters
+    const char *authProtocol = NULL;
+    const char *authPassword = NULL;
+    const char *privProtocol = NULL;
+    const char *privPassword = NULL;
+
+    // SNMPv3 security level
+    const char *security_level = "noAuthNoPriv";
+
     if (argc > 1) {
         if (strcmp(argv[1], "1") == 0) {
             snmp_version = 1;
         } else if (strcmp(argv[1], "2c") == 0) {
             snmp_version = 2;
+        } else if (strcmp(argv[1], "3") == 0) {
+            snmp_version = 3;
+
+            // Expect additional parameters for SNMPv3
+            if (argc > 2) {
+                allowed_community = argv[2];
+            } else {
+                printf("Usage: %s 3 <username> [noAuthNoPriv|authNoPriv|authPriv] [authProtocol authPassword [privProtocol privPassword]]\n", argv[0]);
+                exit(EXIT_FAILURE);
+            }
+
+            if (argc > 3) {
+                security_level = argv[3];
+            }
+
+            if (strcmp(security_level, "authNoPriv") == 0 || strcmp(security_level, "authPriv") == 0) {
+                if (argc > 4) {
+                    authProtocol = argv[4];
+                    authPassword = argv[5];
+                } else {
+                    printf("Authentication parameters required for security levels 'authNoPriv' or 'authPriv'\n");
+                    exit(EXIT_FAILURE);
+                }
+            }
+
+            if (strcmp(security_level, "authPriv") == 0) {
+                if (argc > 6) {
+                    privProtocol = argv[6];
+                    privPassword = argv[7];
+                } else {
+                    printf("Privacy parameters required for security level 'authPriv'\n");
+                    exit(EXIT_FAILURE);
+                }
+            }
         } else {
-            printf("Usage: %s [1|2c] [community]\n", argv[0]);
+            printf("Usage: %s [1|2c|3] [community|username] [security_level] [authProtocol authPassword [privProtocol privPassword]]\n", argv[0]);
             exit(EXIT_FAILURE);
         }
 
-        if (argc > 2) {
-            allowed_community = argv[2];
+        if (snmp_version == 1 || snmp_version == 2) {
+            if (argc > 2) {
+                allowed_community = argv[2];
+            }
         }
     } else {
-        printf("Usage: %s [1|2c] [community]\n", argv[0]);
+        printf("Usage: %s [1|2c|3] [community|username] [security_level] [authProtocol authPassword [privProtocol privPassword]]\n", argv[0]);
         printf("Using default SNMP version 1 and community 'public'\n");
     }
-
+    
     FILE *file = fopen("CAMERA-MIB.txt", "r");
     if (!file) {
         perror("Error opening file");
@@ -1160,6 +2110,9 @@ int main(int argc, char *argv[]) {
     update_mib_node_value("versionInfo", get_version());
     update_mib_node_value("dateTimeInfo", get_date());
     update_mib_node_value("cpuUsage", &cpu_usage);
+    update_mib_node_value("cpuLoad1Min", get_cpu_load(1));
+    update_mib_node_value("cpuLoad5Min", get_cpu_load(5));
+    update_mib_node_value("cpuLoad15Min", get_cpu_load(15));
 
     // -- Network Information
     update_mib_node_value("macAddressInfo", get_mac_address());
@@ -1197,6 +2150,8 @@ int main(int argc, char *argv[]) {
 
         snmp_request(buffer, n, &cliaddr, sockfd, snmp_version, allowed_community);
     }
+
+    free_mib_nodes();
 
     return 0;
 }

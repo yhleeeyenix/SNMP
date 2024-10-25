@@ -9,6 +9,20 @@
 #define HANDLER_CAN_RONLY 0
 #define HANDLER_CAN_RWRITE 1
 
+// SNMPv3 USM 오류 코드 정의
+#define SNMPERR_SUCCESS 0
+#define SNMPERR_USM_UNKNOWNENGINEID 1401
+#define SNMPERR_USM_UNKNOWNSECURITYNAME 1402
+#define SNMPERR_USM_UNSUPPORTEDSECURITYLEVEL 1403
+#define SNMPERR_USM_AUTHENTICATIONFAILURE 1404
+#define SNMPERR_USM_NOTINTIMEWINDOW 1405
+#define SNMPERR_USM_DECRYPTIONERROR 1406
+
+// SNMPv3 보안 모델 정의
+#define SNMP_SEC_MODEL_USM 3
+
+typedef unsigned int oid;
+
 typedef enum {
     VALUE_TYPE_STRING,
     VALUE_TYPE_INT,
@@ -37,7 +51,6 @@ typedef struct MIBNode {
     struct MIBNode *next;        // 형제 노드
 } MIBNode;
 
-
 // SNMP packet structure definition
 typedef struct {
     int version;
@@ -51,6 +64,46 @@ typedef struct {
     int non_repeaters;
     int max_repetitions;
 } SNMPPacket;
+
+typedef struct {
+    int version;
+    int msgID;
+    int msgMaxSize;
+    unsigned char msgFlags[1];
+    int msgSecurityModel;
+
+    // msgSecurityParameters (USM)
+    unsigned char msgAuthoritativeEngineID[32];
+    int msgAuthoritativeEngineID_len;
+    int msgAuthoritativeEngineBoots;
+    int msgAuthoritativeEngineTime;
+    char msgUserName[32];
+    unsigned char msgAuthenticationParameters[32];
+    int msgAuthenticationParameters_len;
+    unsigned char msgPrivacyParameters[32];
+    int msgPrivacyParameters_len;
+
+    // ScopedPDU
+    unsigned char contextEngineID[32];
+    int contextEngineID_len;
+    char contextName[32];
+
+    // PDU 데이터
+    unsigned char pdu_type;
+    int request_id;
+    int error_status;
+    int error_index;
+
+    // VarBindList (여러 VarBind를 처리할 수 있도록 배열로 정의)
+    struct {
+        unsigned char oid[BUFFER_SIZE];
+        int oid_len;
+        unsigned char value_type;
+        unsigned char value[BUFFER_SIZE];
+        int value_len;
+    } varbind_list[BUFFER_SIZE];
+    int varbind_count;
+} SNMPv3Packet;
 
 // SNMP error code table definition
 typedef enum {
@@ -95,6 +148,7 @@ const char* pdu_type_str(unsigned char pdu_type) {
         case 0xA3: return "SET-REQUEST";
         case 0xA4: return "TRAP";
         case 0xA5: return "GET-BULK";
+        case 0xA8: return "REPORT";
         default: return "Unknown PDU";
     }
 }
