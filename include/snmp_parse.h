@@ -3,16 +3,18 @@
 
 #include "snmp.h"
 
-// Function to read length field in ASN.1 BER format
+// Define ASN.1 BER Types for clarity
+#define TYPE_SEQUENCE       0x30
+#define TYPE_INTEGER        0x02
+#define TYPE_OCTET_STRING   0x04
+#define TYPE_OID            0x06
+
 int read_length(unsigned char *buffer, int *index);
 
-// Function to read integer value in ASN.1 BER format
 int read_integer(unsigned char *buffer, int *index, int len);
 
-// Function to encode length field in ASN.1 BER format
 int write_length(unsigned char *buffer, int len);
 
-// Function to encode length at a specific position
 int encode_length_at(unsigned char *buffer, int length);
 
 // Function to encode length field

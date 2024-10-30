@@ -2,13 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "snmp_parse.h"  // SNMP parsing function declarations
-#include "snmp.h"        // SNMP protocol definitions
-#include "snmp_mib.h"    // MIB tree structures
-#include "utility.h"     // System utility functions
+#include "snmp_parse.h"
+#include "snmp.h"
+#include "snmp_mib.h"
+#include "utility.h"
 
-
-// ASN.1 BER 형식의 길이 필드 디코딩
+// Function to read length field in ASN.1 BER format
 int read_length(unsigned char *buffer, int *index) {
     int len = 0;
     unsigned char len_byte = buffer[*index];
@@ -26,6 +25,7 @@ int read_length(unsigned char *buffer, int *index) {
     return len;
 }
 
+// Function to read integer value in ASN.1 BER format
 int read_integer(unsigned char *buffer, int *index, int len) {
     int value = 0;
     for (int i = 0; i < len; i++) {
@@ -35,14 +35,13 @@ int read_integer(unsigned char *buffer, int *index, int len) {
     return value;
 }
 
-// ASN.1 BER 형식의 길이 필드 인코딩
+// Function to encode length field in ASN.1 BER format
 int write_length(unsigned char *buffer, int len) {
     if (len < 0) {
         printf("len < 0\n");
         return -1; // Return error for invalid length
     }
     if (len < 128) {
-        printf("len < 128\n");
         buffer[0] = len;
         return 1;
     } else {
@@ -61,6 +60,7 @@ int write_length(unsigned char *buffer, int len) {
     }
 }
 
+// Function to encode length at a specific position
 int encode_length_at(unsigned char *buffer, int length) {
     unsigned char temp[10];
     int len_bytes = encode_length(temp, length);
@@ -166,7 +166,6 @@ int oid_compare(const unsigned char *oid1, int oid1_len, const unsigned char *oi
     return 0;
 }
 
-
 void parse_tlv(unsigned char *buffer, int *index, int length, SNMPPacket *snmp_packet) {
     while (*index < length) {
         unsigned char type = buffer[*index];
@@ -174,14 +173,14 @@ void parse_tlv(unsigned char *buffer, int *index, int length, SNMPPacket *snmp_p
         int len = read_length(buffer, index);
         int value_start = *index;
 
-        if (type == 0x30 || (type >= 0xA0 && type <= 0xA5)) {  // SEQUENCE 또는 PDU
+        if (type == TYPE_SEQUENCE || (type >= 0xA0 && type <= 0xA5)) {  // SEQUENCE or PDU
             if (type >= 0xA0 && type <= 0xA5) {
-                snmp_packet->pdu_type = type;  // PDU 타입 저장
+                snmp_packet->pdu_type = type;  // PDU type 저장
             }
             int new_index = *index;
             parse_tlv(buffer, &new_index, value_start + len, snmp_packet);  // 내부 SEQUENCE 파싱
             *index = value_start + len;  // 인덱스 업데이트
-        } else if (type == 0x02) {  // INTEGER
+        } else if (type == TYPE_INTEGER) {  // INTEGER 처리
             if (snmp_packet->version == -1) {
                 snmp_packet->version = buffer[*index];  // SNMP 버전 저장
             } else if (snmp_packet->pdu_type == 0xA5) {  // GET-BULK PDU
@@ -199,27 +198,27 @@ void parse_tlv(unsigned char *buffer, int *index, int length, SNMPPacket *snmp_p
             } else if (len == 1 && snmp_packet->error_index == 0) {
                 snmp_packet->error_index = buffer[*index];  // Error Index
             }
-            *index += len;
-        } else if (type == 0x04) {  // OCTET STRING
+            *index += len;  // 인덱스 업데이트
+        } else if (type == TYPE_OCTET_STRING) {  // OCTET STRING 처리
             if (snmp_packet->community[0] == '\0') {
                 memcpy(snmp_packet->community, &buffer[*index], len);  // 커뮤니티 이름 저장
                 snmp_packet->community[len] = '\0';  // NULL 종료
             }
-            *index += len;
-        } else if (type == 0x06) {  // OID
+            *index += len;  // 인덱스 업데이트
+        } else if (type == TYPE_OID) {  // OID 처리
             memcpy(snmp_packet->oid, &buffer[*index], len);  // OID 저장
             snmp_packet->oid_len = len;
-            *index += len;
+            *index += len;  // 인덱스 업데이트
         } else {
-            *index += len;
+            *index += len;  // 알 수 없는 타입은 길이만큼 인덱스 업데이트
         }
     }
 }
 
 void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet, unsigned char pdu_type) {
-    snmp_packet->pdu_type = pdu_type;
+    snmp_packet->pdu_type = pdu_type;  // PDU 타입 저장
 
-    int pdu_end = *index + length;
+    int pdu_end = *index + length;  // PDU 종료 위치 계산
 
     // 1. request-id
     if (*index >= pdu_end) {
@@ -227,7 +226,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         return;
     }
     unsigned char type = buffer[*index];
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid request-id Type\n");
         return;
     }
@@ -237,7 +236,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         printf("Invalid length for request-id\n");
         return;
     }
-    snmp_packet->request_id = read_integer(buffer, index, len);
+    snmp_packet->request_id = read_integer(buffer, index, len);  // request-id 읽기
 
     // 2. error-status
     if (*index >= pdu_end) {
@@ -245,7 +244,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         return;
     }
     type = buffer[*index];
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid error-status Type\n");
         return;
     }
@@ -255,7 +254,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         printf("Invalid length for error-status\n");
         return;
     }
-    snmp_packet->error_status = read_integer(buffer, index, len);
+    snmp_packet->error_status = read_integer(buffer, index, len);  // error-status 읽기
 
     // 3. error-index
     if (*index >= pdu_end) {
@@ -263,7 +262,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         return;
     }
     type = buffer[*index];
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid error-index Type\n");
         return;
     }
@@ -273,7 +272,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         printf("Invalid length for error-index\n");
         return;
     }
-    snmp_packet->error_index = read_integer(buffer, index, len);
+    snmp_packet->error_index = read_integer(buffer, index, len);  // error-index 읽기
 
     // 4. variable-bindings
     if (*index >= pdu_end) {
@@ -281,7 +280,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         return;
     }
     type = buffer[*index];
-    if (type != 0x30) {
+    if (type != TYPE_SEQUENCE) {
         printf("Invalid variable-bindings Type\n");
         return;
     }
@@ -291,9 +290,9 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         printf("Invalid length for variable-bindings\n");
         return;
     }
-    int varbind_list_end = *index + len;
+    int varbind_list_end = *index + len;  // VarBindList 종료 위치
 
-    snmp_packet->varbind_count = 0;
+    snmp_packet->varbind_count = 0;  // VarBind 수 초기화
 
     // VarBindList 파싱
     while (*index < varbind_list_end) {
@@ -303,7 +302,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
             return;
         }
         type = buffer[*index];
-        if (type != 0x30) {
+        if (type != TYPE_SEQUENCE) {
             printf("Invalid VarBind Type\n");
             return;
         }
@@ -313,7 +312,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
             printf("Invalid length for VarBind SEQUENCE\n");
             return;
         }
-        int varbind_end = *index + len;
+        int varbind_end = *index + len;  // VarBind 종료 위치
 
         // OID 파싱
         if (*index >= varbind_end) {
@@ -321,7 +320,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
             return;
         }
         type = buffer[*index];
-        if (type != 0x06) {
+        if (type != TYPE_OID) {
             printf("Invalid OID Type\n");
             return;
         }
@@ -333,7 +332,7 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         }
         memcpy(snmp_packet->varbind_list[snmp_packet->varbind_count].oid, &buffer[*index], len);
         snmp_packet->varbind_list[snmp_packet->varbind_count].oid_len = len;
-        (*index) += len;
+        (*index) += len;  // 인덱스 업데이트
 
         // Value 파싱
         if (*index >= varbind_end) {
@@ -350,9 +349,9 @@ void parse_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp
         snmp_packet->varbind_list[snmp_packet->varbind_count].value_type = type;
         memcpy(snmp_packet->varbind_list[snmp_packet->varbind_count].value, &buffer[*index], len);
         snmp_packet->varbind_list[snmp_packet->varbind_count].value_len = len;
-        (*index) += len;
+        (*index) += len;  // 인덱스 업데이트
 
-        snmp_packet->varbind_count++;
+        snmp_packet->varbind_count++;  // VarBind 수 증가
 
         if (*index != varbind_end) {
             printf("VarBind SEQUENCE length mismatch\n");
@@ -376,7 +375,7 @@ void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packe
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x30) {
+    if (type != TYPE_SEQUENCE) {
         printf("Invalid ScopedPDU Type\n");
         return;
     }
@@ -388,14 +387,14 @@ void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packe
     }
     int seq_end = (*index) + len;
 
-    // 1. contextEngineID`
+    // 1. contextEngineID
     if (*index >= seq_end) {
         printf("Index out of bounds while reading contextEngineID\n");
         return;
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid contextEngineID Type\n");
         return;
     }
@@ -407,7 +406,7 @@ void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packe
     }
     memcpy(snmp_packet->contextEngineID, &buffer[*index], len);
     snmp_packet->contextEngineID_len = len;
-    (*index) += len;
+    (*index) += len;  // 인덱스 업데이트
 
     // 2. contextName
     if (*index >= seq_end) {
@@ -416,7 +415,7 @@ void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packe
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid contextName Type\n");
         return;
     }
@@ -427,8 +426,8 @@ void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packe
         return;
     }
     memcpy(snmp_packet->contextName, &buffer[*index], len);
-    snmp_packet->contextName[len] = '\0';
-    (*index) += len;
+    snmp_packet->contextName[len] = '\0';  // NULL 종료
+    (*index) += len;  // 인덱스 업데이트
 
     // data (PDU) 파싱
     if (*index >= seq_end) {
@@ -443,9 +442,8 @@ void parse_scoped_pdu(unsigned char *buffer, int *index, int length, SNMPv3Packe
         return;
     }
 
-    parse_pdu(buffer, index, len, snmp_packet, pdu_type);
+    parse_pdu(buffer, index, len, snmp_packet, pdu_type);  // PDU 파싱
 }
-
 
 void parse_usm_security_parameters(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet) {
     unsigned char type;
@@ -458,7 +456,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x30) {
+    if (type != TYPE_SEQUENCE) {
         printf("Invalid USM Sequence Type\n");
         return;
     }
@@ -476,7 +474,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid msgAuthoritativeEngineID Type\n");
         return;
     }
@@ -487,7 +485,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     memcpy(snmp_packet->msgAuthoritativeEngineID, &buffer[*index], len);
     snmp_packet->msgAuthoritativeEngineID_len = len;
-    (*index) += len;
+    (*index) += len;  // 인덱스 업데이트
 
     // 2. msgAuthoritativeEngineBoots
     if (*index >= length) {
@@ -496,12 +494,12 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid msgAuthoritativeEngineBoots Type\n");
         return;
     }
     len = read_length(buffer, index);
-    snmp_packet->msgAuthoritativeEngineBoots = read_integer(buffer, index, len);
+    snmp_packet->msgAuthoritativeEngineBoots = read_integer(buffer, index, len);  // msgAuthoritativeEngineBoots 읽기
 
     // 3. msgAuthoritativeEngineTime
     if (*index >= length) {
@@ -510,12 +508,12 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid msgAuthoritativeEngineTime Type\n");
         return;
     }
     len = read_length(buffer, index);
-    snmp_packet->msgAuthoritativeEngineTime = read_integer(buffer, index, len);
+    snmp_packet->msgAuthoritativeEngineTime = read_integer(buffer, index, len);  // msgAuthoritativeEngineTime 읽기
 
     // 4. msgUserName
     if (*index >= length) {
@@ -524,7 +522,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid msgUserName Type\n");
         return;
     }
@@ -534,8 +532,8 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
         return;
     }
     memcpy(snmp_packet->msgUserName, &buffer[*index], len);
-    snmp_packet->msgUserName[len] = '\0';
-    (*index) += len;
+    snmp_packet->msgUserName[len] = '\0';  // NULL 종료
+    (*index) += len;  // 인덱스 업데이트
 
     // 5. msgAuthenticationParameters
     if (*index >= length) {
@@ -544,7 +542,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid msgAuthenticationParameters Type\n");
         return;
     }
@@ -555,7 +553,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     memcpy(snmp_packet->msgAuthenticationParameters, &buffer[*index], len);
     snmp_packet->msgAuthenticationParameters_len = len;
-    (*index) += len;
+    (*index) += len;  // 인덱스 업데이트
 
     // 6. msgPrivacyParameters
     if (*index >= length) {
@@ -564,7 +562,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid msgPrivacyParameters Type\n");
         return;
     }
@@ -575,7 +573,7 @@ void parse_usm_security_parameters(unsigned char *buffer, int *index, int length
     }
     memcpy(snmp_packet->msgPrivacyParameters, &buffer[*index], len);
     snmp_packet->msgPrivacyParameters_len = len;
-    (*index) += len;
+    (*index) += len;  // 인덱스 업데이트
 }
 
 void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3Packet *snmp_packet) {
@@ -589,7 +587,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x30) {
+    if (type != TYPE_SEQUENCE) {
         printf("Invalid SNMPv3 Message Type\n");
         return;
     }
@@ -608,12 +606,12 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid msgVersion Type\n");
         return;
     }
     len = read_length(buffer, index);
-    snmp_packet->version = read_integer(buffer, index, len);
+    snmp_packet->version = read_integer(buffer, index, len);  // msgVersion 읽기
 
     // 3. msgGlobalData (HeaderData)
     if (*index >= length) {
@@ -622,7 +620,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x30) {
+    if (type != TYPE_SEQUENCE) {
         printf("Invalid msgGlobalData Type\n");
         return;
     }
@@ -631,7 +629,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
         printf("Invalid length for msgGlobalData\n");
         return;
     }
-    int header_end = *index + len;
+    int header_end = *index + len;  // Header 종료 위치
 
     // 3.1 msgID
     if (*index >= length) {
@@ -640,12 +638,12 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid msgID Type\n");
         return;
     }
     len = read_length(buffer, index);
-    snmp_packet->msgID = read_integer(buffer, index, len);
+    snmp_packet->msgID = read_integer(buffer, index, len);  // msgID 읽기
 
     // 3.2 msgMaxSize
     if (*index >= length) {
@@ -654,12 +652,12 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid msgMaxSize Type\n");
         return;
     }
     len = read_length(buffer, index);
-    snmp_packet->msgMaxSize = read_integer(buffer, index, len);
+    snmp_packet->msgMaxSize = read_integer(buffer, index, len);  // msgMaxSize 읽기
 
     // 3.3 msgFlags
     if (*index >= length) {
@@ -668,7 +666,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) {
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid msgFlags Type\n");
         return;
     }
@@ -678,7 +676,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
         return;
     }
     memcpy(snmp_packet->msgFlags, &buffer[*index], len);
-    (*index) += len;
+    (*index) += len;  // 인덱스 업데이트
 
     // 3.4 msgSecurityModel
     if (*index >= length) {
@@ -687,12 +685,12 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x02) {
+    if (type != TYPE_INTEGER) {
         printf("Invalid msgSecurityModel Type\n");
         return;
     }
     len = read_length(buffer, index);
-    snmp_packet->msgSecurityModel = read_integer(buffer, index, len);
+    snmp_packet->msgSecurityModel = read_integer(buffer, index, len);  // msgSecurityModel 읽기
 
     // 4. msgSecurityParameters
     if (*index >= length) {
@@ -701,7 +699,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type != 0x04) { // OCTET STRING 타입 확인
+    if (type != TYPE_OCTET_STRING) {
         printf("Invalid msgSecurityParameters Type\n");
         return;
     }
@@ -714,10 +712,10 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     // msgSecurityParameters를 임시 버퍼에 저장하여 파싱
     unsigned char sec_params_buffer[BUFFER_SIZE];
     memcpy(sec_params_buffer, &buffer[*index], len);
-    (*index) += len;
+    (*index) += len;  // 인덱스 업데이트
 
     int sec_params_index = 0;
-    parse_usm_security_parameters(sec_params_buffer, &sec_params_index, len, snmp_packet);
+    parse_usm_security_parameters(sec_params_buffer, &sec_params_index, len, snmp_packet);  // Security Parameters 파싱
 
     // 5. msgData (ScopedPDUData)
     if (*index >= length) {
@@ -726,7 +724,7 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     }
     type = buffer[*index];
     (*index)++;
-    if (type == 0x04) { // OCTET STRING (plaintext)
+    if (type == TYPE_OCTET_STRING) {  // OCTET STRING (plaintext)
         len = read_length(buffer, index);
         if (len < 0 || *index + len > length) {
             printf("Invalid length for msgData OCTET STRING\n");
@@ -752,5 +750,52 @@ void parse_snmpv3_message(unsigned char *buffer, int *index, int length, SNMPv3P
     } else {
         printf("Invalid msgData Type: %02X\n", type);
         return;
+    }
+}
+
+// Function to print SNMPv3Packet details
+void printSNMPv3Packet(SNMPv3Packet *packet) {
+    printf("SNMP Version: %d\n", packet->version);
+    printf("Message ID: %u\n", packet->msgID);
+    printf("Message Max Size: %u\n", packet->msgMaxSize);
+    printf("Message Flags: 0x%02x\n", packet->msgFlags[0]);
+    printf("Security Model: %d\n", packet->msgSecurityModel);
+    
+    printf("Authoritative Engine ID: ");
+    for (int i = 0; i < packet->msgAuthoritativeEngineID_len; i++) {
+        printf("%02x", packet->msgAuthoritativeEngineID[i]);
+    }
+    printf("\n");
+    printf("Authoritative Engine Boots: %d\n", packet->msgAuthoritativeEngineBoots);
+    printf("Authoritative Engine Time: %d\n", packet->msgAuthoritativeEngineTime);
+    printf("User Name: %s\n", packet->msgUserName);
+    
+    printf("Authentication Parameters: ");
+    for (int i = 0; i < packet->msgAuthenticationParameters_len; i++) {
+        printf("%02x", packet->msgAuthenticationParameters[i]);
+    }
+    printf("\n");
+
+    printf("Privacy Parameters: ");
+    for (int i = 0; i < packet->msgPrivacyParameters_len; i++) {
+        printf("%02x", packet->msgPrivacyParameters[i]);
+    }
+    printf("\n");
+
+    printf("Context Engine ID: ");
+    for (int i = 0; i < packet->contextEngineID_len; i++) {
+        printf("%02x", packet->contextEngineID[i]);
+    }
+    printf("\n");
+    
+    printf("Context Name: %s\n", packet->contextName);
+    printf("PDU Type: 0x%02x\n", packet->pdu_type);
+    printf("Request ID: %u\n", packet->request_id);
+    printf("Error Status: %d\n", packet->error_status);
+    printf("Error Index: %d\n", packet->error_index);
+    printf("VarBind Count: %d\n", packet->varbind_count);
+
+    for (int i = 0; i < packet->varbind_count; i++) {
+        printf("VarBind %d - OID: %s, Value: %s\n", i + 1, packet->varbind_list[i].oid, packet->varbind_list[i].value);
     }
 }

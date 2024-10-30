@@ -1,12 +1,12 @@
-#include "snmp.h"        // SNMP protocol functions
-#include "snmp_mib.h"    // MIB tree functions
-#include "utility.h"     // System utility functions
-
 #include <netinet/in.h>  // Networking functions and structures
 #include <arpa/inet.h>   // Internet operations
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "snmp.h"        // SNMP protocol functions
+#include "snmp_mib.h"    // MIB tree functions
+#include "utility.h"     // System utility functions
 
 
 int main(int argc, char *argv[]) {
@@ -155,8 +155,6 @@ int main(int argc, char *argv[]) {
     update_mib_node_value(&mib_tree, "sdCardStatus", check_sdcard_installed());
     // update_mib_node_value("sdCardCapacity", get_version());
 
-    // print_all_mib_nodes();
-
     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
         perror("socket creation failed");
@@ -167,6 +165,8 @@ int main(int argc, char *argv[]) {
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = INADDR_ANY;
     servaddr.sin_port = htons(SNMP_PORT);
+
+    // print_all_mib_nodes(&mib_tree);
 
     if (bind(sockfd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
         perror("bind failed");

@@ -36,7 +36,7 @@ typedef unsigned long oid;
 // SNMP Packet Structure
 typedef struct {
     int version;                       // SNMP version
-    char community[128];               // Community string
+    char community[32];               // Community string
     unsigned char pdu_type;            // PDU type
     unsigned int request_id;           // Request ID
     int error_status;                  // Error status
@@ -51,11 +51,11 @@ typedef struct {
 
 // VarBind Structure
 typedef struct {
-    unsigned char oid[128];            // OID
-    int oid_len;                       // Length of OID
-    unsigned char value_type;          // Value type
-    unsigned char value[BUFFER_SIZE];  // Value
-    int value_len;                     // Length of value
+    unsigned char oid[64];
+    int oid_len;
+    unsigned char value_type;
+    unsigned char value[128];
+    int value_len;
 } VarBind;
 
 // SNMPv3 Packet Structure

@@ -739,7 +739,7 @@ void create_bulk_response(SNMPPacket *request_packet, unsigned char *response, i
 
     char requested_oid_str[BUFFER_SIZE];
     oid_to_string(request_packet->oid, request_packet->oid_len, requested_oid_str);
-    printf("requested_oid_str: %s\n", requested_oid_str);
+    // printf("requested_oid_str: %s\n", requested_oid_str);
 
     int start_index = -1;
 
@@ -1031,7 +1031,7 @@ void snmp_request(unsigned char *buffer, int n, struct sockaddr_in *cliaddr, int
         int index = 0;
         parse_snmpv3_message(buffer, &index, n, &snmp_packet);
 
-        // printf("PDU Type: %02X\n", snmp_packet.pdu_type);
+        printSNMPv3Packet(&snmp_packet);
 
         if (snmp_packet.msgAuthoritativeEngineID_len == 0) {
             unsigned char response[BUFFER_SIZE];

@@ -5,23 +5,24 @@
 #include "snmp_mib.h"    // MIB tree function declarations
 #include "utility.h"     // System utility functions
 
+// Function to add a MIB node
 MIBNode *add_mib_node(MIBTree *mib_tree, const char *name, const char *oid, const char *type, int isWritable, const char *status, const void *value, MIBNode *parent) {
-    for (int i = 0; i < mib_tree->node_count; i++) {
-        if (strcmp(mib_tree->nodes[i]->oid, oid) == 0) {
-            return NULL;
-        }
-    }    
-
     if (mib_tree->node_count >= MAX_NODES) {
         printf("Error: Maximum number of nodes reached.\n");
         return NULL;
+    }
+
+    for (int i = 0; i < mib_tree->node_count; i++) {
+        if (strcmp(mib_tree->nodes[i]->oid, oid) == 0) {
+            printf("Error: OID %s already exists.\n", oid);
+            return NULL;
+        }
     }
 
     if (strcmp(status, "current") != 0) {
         return NULL;
     }
 
-    // 노드 생성
     MIBNode *node = (MIBNode *)malloc(sizeof(MIBNode));
     if (!node) {
         printf("Error: Memory allocation failed.\n");
@@ -107,6 +108,7 @@ void print_all_mib_nodes(MIBTree *mib_tree) {
     }
 }
 
+// Function to find a MIB node by name
 MIBNode *find_mib_node(MIBNode *node, const char *name) {
     if (!node) return NULL;
 
@@ -120,8 +122,9 @@ MIBNode *find_mib_node(MIBNode *node, const char *name) {
     return find_mib_node(node->next, name);
 }
 
+// Function to parse OBJECT IDENTIFIER
 void parse_object_identifier(char *line, MIBTree *mib_tree) {
-    char name[128], parent_name[128];
+    char name[32], parent_name[32];
     int number;
 
     sscanf(line, "%s OBJECT IDENTIFIER ::= { %s %d }", name, parent_name, &number);
@@ -136,14 +139,15 @@ void parse_object_identifier(char *line, MIBTree *mib_tree) {
         return;
     }
 
-    char full_oid[256];
+    char full_oid[128];
     snprintf(full_oid, sizeof(full_oid), "%s.%d", parent->oid, number);
 
     add_mib_node(mib_tree, name, full_oid, "OBJECT IDENTIFIER", 0, "current", "", parent);
 }
 
+// Function to parse OBJECT-TYPE definition
 void parse_object_type(char *line, FILE *file, MIBTree *mib_tree) {
-    char name[128], syntax[128] = "", access[128] = "", status[128] = "", description[256] = "";
+    char name[32], syntax[16] = "", access[12] = "", status[12] = "", description[128] = "";
     char oid_parent_name[128];
     int oid_number;
 
@@ -159,7 +163,8 @@ void parse_object_type(char *line, FILE *file, MIBTree *mib_tree) {
         } else if (strstr(line, "DESCRIPTION")) {
             char *start = strchr(line, '"');
             if (start) {
-                strcpy(description, start + 1);
+                strncpy(description, start +1, sizeof(description)-1);
+                description[sizeof(description)-1] = '\0';
                 char *end = strchr(description, '"');
                 if (end) {
                     *end = '\0';
@@ -177,16 +182,17 @@ void parse_object_type(char *line, FILE *file, MIBTree *mib_tree) {
         return;
     }
 
-    char full_oid[256];
+    char full_oid[128];
     snprintf(full_oid, sizeof(full_oid), "%s.%d", parent->oid, oid_number);
 
     int isWritable = (strcmp(access, "read-write") == 0 || strcmp(access, "read-create") == 0);
     add_mib_node(mib_tree, name, full_oid, syntax, isWritable, status, "", parent);
 }
 
+// Function to convert OID to string
 void oid_to_string(unsigned char *oid, int oid_len, char *oid_str) {
     int i;
-    char buffer[32];
+    char buffer[64];
 
     sprintf(oid_str, "%d.%d", oid[0] / 40, oid[0] % 40);
 
@@ -196,17 +202,18 @@ void oid_to_string(unsigned char *oid, int oid_len, char *oid_str) {
     }
 }
 
+// Function to parse OID string into integer array
 int parse_oid_string(const char *oid_str, unsigned int *oid_parts) {
     int oid_len = 0;
-    char oid_copy[BUFFER_SIZE];
-    strncpy(oid_copy, oid_str, BUFFER_SIZE - 1);
-    oid_copy[BUFFER_SIZE - 1] = '\0';
+    char oid_copy[64];
+    strncpy(oid_copy, oid_str, sizeof(oid_copy) - 1);
+    oid_copy[sizeof(oid_copy) - 1] = '\0';
     char *token = strtok(oid_copy, ".");
     while (token != NULL && oid_len < 128) {
         int value = atoi(token);
         if (value < 0) {
             printf("Invalid OID component: %s\n", token);
-            return -1; // 오류 처리
+            return -1;
         }
         oid_parts[oid_len++] = (unsigned int)value;
         token = strtok(NULL, ".");
@@ -214,6 +221,7 @@ int parse_oid_string(const char *oid_str, unsigned int *oid_parts) {
     return oid_len;
 }
 
+// Function to compare OID strings
 int compare_oids(const char *oid1, const char *oid2) {
     unsigned int oid1_parts[128], oid2_parts[128];
     int oid1_len = parse_oid_string(oid1, oid1_parts);
@@ -232,8 +240,9 @@ int compare_oids(const char *oid1, const char *oid2) {
     return 0;
 }
 
+// Function to find the next MIB entry
 int find_next_mib_entry(MIBTree *mib_tree, unsigned char *oid, int oid_len, MIBNode **nextEntry) {
-    char oid_str[BUFFER_SIZE];
+    char oid_str[64];
     oid_to_string(oid, oid_len, oid_str);
 
     for (int i = 0; i < mib_tree->node_count; i++) {
@@ -246,14 +255,16 @@ int find_next_mib_entry(MIBTree *mib_tree, unsigned char *oid, int oid_len, MIBN
     return 0;
 }
 
+// Function to convert string OID to binary
 int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
     int oid_buf_len = 0;
-    unsigned int oid_parts[128];
+    unsigned int oid_parts[64];
     int oid_parts_count = 0;
 
-    // OID 문자열을 정수 배열로 파싱
-    char oid_copy[BUFFER_SIZE];
-    strcpy(oid_copy, oid_str);
+    char oid_copy[64];
+    strncpy(oid_copy, oid_str, sizeof(oid_copy)-1);
+    oid_copy[sizeof(oid_copy)-1] = '\0';
+    
     char *token = strtok(oid_copy, ".");
     while (token != NULL && oid_parts_count < 128) {
         oid_parts[oid_parts_count++] = atoi(token);
@@ -287,12 +298,14 @@ int string_to_oid(const char *oid_str, unsigned char *oid_buf) {
     return oid_buf_len;
 }
 
+// Function to update dynamic values
 void update_dynamic_values(MIBTree *mib_tree) {
     for (int i = 0; i < mib_tree->node_count; i++) {
         if (strcmp(mib_tree->nodes[i]->name, "sysUpTime") == 0) {
             mib_tree->nodes[i]->value.ticks_value = get_system_uptime();
         } else if (strcmp(mib_tree->nodes[i]->name, "dateTimeInfo") == 0) {
-            strcpy(mib_tree->nodes[i]->value.str_value, get_date());
+            strncpy(mib_tree->nodes[i]->value.str_value, get_date(), sizeof(mib_tree->nodes[i]->value.str_value)-1);
+            mib_tree->nodes[i]->value.str_value[sizeof(mib_tree->nodes[i]->value.str_value)-1] = '\0';
         } else if (strcmp(mib_tree->nodes[i]->name, "cpuUsage") == 0) {
             mib_tree->nodes[i]->value.int_value = get_cpuUsage();
         } else if (strcmp(mib_tree->nodes[i]->name, "memoryusage") == 0) {
@@ -301,6 +314,7 @@ void update_dynamic_values(MIBTree *mib_tree) {
     }
 }
 
+// Function to update the value of a specific MIB node
 int update_mib_node_value(MIBTree *mib_tree, const char *name, const void *value) {
     MIBNode *node = NULL;
 
@@ -331,11 +345,14 @@ int update_mib_node_value(MIBTree *mib_tree, const char *name, const void *value
     return 0;
 }
 
+// Function to free MIB nodes
 void free_mib_nodes(MIBTree *mib_tree) {
     for (int i = 0; i < mib_tree->node_count; i++) {
+        free(mib_tree->nodes[i]->child); // 자식 노드 해제
         free(mib_tree->nodes[i]);
     }
     mib_tree->node_count = 0;
     mib_tree->root = NULL;
-}
 
+    printf("\n\n\nfree_mib_nodes\n\n\n");
+}
