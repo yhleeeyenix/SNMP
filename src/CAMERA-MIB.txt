@@ -1,0 +1,131 @@
+CAMERA-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    	MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises FROM SNMPv2-SMI
+    	DisplayString FROM SNMPv2-TC
+    	MODULE-COMPLIANCE, OBJECT-GROUP FROM SNMPv2-CONF;
+
+cam		MODULE-IDENTITY
+    	LAST-UPDATED "202410161000Z"
+    	ORGANIZATION "Organization"
+    	CONTACT-INFO "email:    admin@example.com"
+    	DESCRIPTION  "MIB for NWCAM"
+    	::= { en 1 }
+
+org OBJECT IDENTIFIER ::=  {  iso  3  }
+dod OBJECT IDENTIFIER ::=  {  org  6  }
+internet OBJECT IDENTIFIER ::=  {  dod  1  }
+private OBJECT IDENTIFIER ::=  {  internet  4  }
+enterprises OBJECT IDENTIFIER ::=  {  private  1  }  
+en OBJECT IDENTIFIER ::=  {  enterprises  127 }
+
+device OBJECT IDENTIFIER ::=  {  cam  1 }
+systemInfo OBJECT IDENTIFIER ::=  {  cam  2 }
+networkInfo OBJECT IDENTIFIER ::=  {  cam  3 }
+storageInfo OBJECT IDENTIFIER ::=  {  cam  4 }
+
+
+-- Device Information
+modelName OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Eyenix EN675 model name"
+    ::= { device 1 }
+
+-- System Information
+versionInfo OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Version information: v1.xx_xxxxxxxxxxxx"
+    ::= { systemInfo 1 }
+
+dateTimeInfo OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "System date and time information"
+    ::= { systemInfo 2 }
+
+cpuUsage OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Current CPU usage percentage"
+    ::= { systemInfo 3 }    
+
+cpuLoad1Min OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Average CPU load over the last 1 minute"
+    ::= { systemInfo 4 }
+
+cpuLoad5Min OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Average CPU load over the last 5 minutes"
+    ::= { systemInfo 5 }
+
+cpuLoad15Min OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Average CPU load over the last 15 minutes"
+    ::= { systemInfo 6 }    
+
+-- Network Information
+macAddressInfo OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "MAC address of the network interface"
+    ::= { networkInfo 1 }
+
+ipAddressInfo OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "IP address of the device"
+    ::= { networkInfo 2 }
+
+gateway OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Gateway address of the network"
+    ::= { networkInfo 3 }
+
+subnetMask OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Subnet mask of the network"
+    ::= { networkInfo 4 }
+
+-- Storage Information
+flashStatus OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "flashStatus: installed or not installed"
+    ::= { storageInfo 1 }
+
+memoryusage OBJECT-TYPE
+    SYNTAX Integer32
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "Capacity of the memoryusage"
+    ::= { storageInfo 2 }
+
+sdCardStatus OBJECT-TYPE
+    SYNTAX DisplayString
+    MAX-ACCESS read-only
+    STATUS current
+    DESCRIPTION "SD card status: installed or not installed"
+    ::= { storageInfo 3 }
+
+END
+
